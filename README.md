@@ -19,7 +19,12 @@ SALESFORCE_SECURITY_TOKEN=your-token
 SALESFORCE_DOMAIN=login          # or "test" for sandbox
 ```
 
-**OAuth (alternative):**
+> **Note:** SOAP API login is disabled by default in newer Salesforce orgs. To enable it:
+> 1. Go to **Setup** → Quick Find → **User Interface**
+> 2. Under **API Settings**, enable **Enable SOAP API login()**
+> 3. Click **Save**
+
+**OAuth (alternative, recommended for enterprise):**
 ```
 SALESFORCE_ACCESS_TOKEN=your-token
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com

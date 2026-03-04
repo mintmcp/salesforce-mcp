@@ -13,7 +13,7 @@ _OBJECT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 class SalesforceClient:
     def __init__(self) -> None:
         self._sf: Salesforce | None = None
-        self._field_cache: dict[str, list[dict]] = {}
+        self._describe_cache: dict[str, dict] = {}
 
     @property
     def sf(self) -> Salesforce:
@@ -31,13 +31,39 @@ class SalesforceClient:
             raise ValueError(f"Not a valid Salesforce object: {object_name!r}")
         return obj
 
-    def get_object_fields(self, object_name: str) -> list[dict]:
-        """Get field metadata for an object (cached)."""
-        if object_name not in self._field_cache:
+    def list_objects(self, search: str | None = None) -> list[dict]:
+        """List all SObjects in the org, optionally filtered by substring."""
+        result = self.sf.describe()
+        sobjects = []
+        for obj in result["sobjects"]:
+            entry = {
+                "name": obj["name"],
+                "label": obj["label"],
+                "queryable": obj["queryable"],
+                "createable": obj["createable"],
+                "custom": obj["custom"],
+            }
+            if search:
+                search_lower = search.lower()
+                if (
+                    search_lower not in entry["name"].lower()
+                    and search_lower not in entry["label"].lower()
+                ):
+                    continue
+            sobjects.append(entry)
+        return sobjects
+
+    def describe_object(self, object_name: str) -> dict:
+        """Get full describe metadata for an object (cached)."""
+        if object_name not in self._describe_cache:
             sf_object = self.get_sf_object(object_name)
             desc = sf_object.describe()
-            self._field_cache[object_name] = desc["fields"]
-        return self._field_cache[object_name]
+            self._describe_cache[object_name] = {
+                "fields": desc["fields"],
+                "childRelationships": desc.get("childRelationships", []),
+                "recordTypeInfos": desc.get("recordTypeInfos", []),
+            }
+        return self._describe_cache[object_name]
 
 
 # Module-level singleton

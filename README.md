@@ -37,8 +37,8 @@ Control which tools are available by setting `SALESFORCE_ACCESS_MODE`:
 | Value | Tools Available | Use Case |
 |---|---|---|
 | `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record | Safe exploration, reporting, read-only integrations |
-| `read_write` (default) | All read tools + create_record, update_record | Day-to-day CRM operations |
-| `all` | All tools including delete_record, tooling_execute, apex_execute, restful | Admin, development, full API access |
+| `read_write` | All read tools + create_record, update_record | Day-to-day CRM operations |
+| `all` (default) | All tools including delete_record, tooling_execute, apex_execute, restful | Full API access |
 
 ### Recommended Security Levels
 
@@ -60,19 +60,19 @@ SALESFORCE_ACCESS_MODE=read
 
 MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so MCP clients can enforce additional policies:
 
-| Tool | Access Mode | readOnlyHint | destructiveHint |
-|---|---|---|---|
-| `list_objects` | read | true | — |
-| `describe_object` | read | true | — |
-| `run_soql_query` | read | true | — |
-| `run_sosl_search` | read | true | — |
-| `get_record` | read | true | — |
-| `create_record` | read_write | false | — |
-| `update_record` | read_write | false | — |
-| `delete_record` | all | false | true |
-| `tooling_execute` | all | false | — |
-| `apex_execute` | all | false | — |
-| `restful` | all | false | — |
+| Tool | Access Mode | readOnlyHint | destructiveHint | openWorldHint |
+|---|---|---|---|---|
+| `list_objects` | read | true | — | — |
+| `describe_object` | read | true | — | — |
+| `run_soql_query` | read | true | — | — |
+| `run_sosl_search` | read | true | — | — |
+| `get_record` | read | true | — | — |
+| `create_record` | read_write | false | — | — |
+| `update_record` | read_write | false | — | — |
+| `delete_record` | all | false | true | — |
+| `tooling_execute` | all | false | — | true |
+| `apex_execute` | all | false | — | true |
+| `restful` | all | false | — | true |
 
 ## Run
 

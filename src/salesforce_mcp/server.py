@@ -13,7 +13,7 @@ mcp = FastMCP("Salesforce")
 
 # --- Access mode ---
 
-_ACCESS_MODE = os.environ.get("SALESFORCE_ACCESS_MODE", "read_write").lower()
+_ACCESS_MODE = os.environ.get("SALESFORCE_ACCESS_MODE", "all").lower()
 if _ACCESS_MODE not in ("read", "read_write", "all"):
     raise ValueError(
         f"Invalid SALESFORCE_ACCESS_MODE: {_ACCESS_MODE!r}. "
@@ -199,6 +199,7 @@ if _ALL_ENABLED:
     @mcp.tool(
         annotations={
             "readOnlyHint": False,
+            "openWorldHint": True,
         }
     )
     @_sf_error_handler
@@ -217,6 +218,7 @@ if _ALL_ENABLED:
     @mcp.tool(
         annotations={
             "readOnlyHint": False,
+            "openWorldHint": True,
         }
     )
     @_sf_error_handler
@@ -232,6 +234,7 @@ if _ALL_ENABLED:
     @mcp.tool(
         annotations={
             "readOnlyHint": False,
+            "openWorldHint": True,
         }
     )
     @_sf_error_handler

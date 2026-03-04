@@ -54,6 +54,8 @@ Set it in your environment or MCP server config:
 SALESFORCE_ACCESS_MODE=read
 ```
 
+> **Tip:** When using this server with [MintMCP](https://mintmcp.com), you can configure fine-grained per-tool permissions directly in MintMCP instead of using the env var. This gives you more granular control (e.g., allow create but not update) without needing to restart the server.
+
 ### Tool Permissions by Access Mode
 
 MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so MCP clients can enforce additional policies:

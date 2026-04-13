@@ -2,6 +2,7 @@
 
 import functools
 import os
+import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -139,6 +140,96 @@ def get_record(object_name: str, record_id: str) -> dict:
     Use run_soql_query or run_sosl_search to find record IDs if you only have a name or email."""
     sf_object = client.get_sf_object(object_name)
     return sf_object.get(record_id)
+
+
+_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9]{15,18}$")
+
+
+def _describe_report(report_id: str) -> dict:
+    if not _REPORT_ID_RE.match(report_id):
+        raise ValueError(f"Invalid Salesforce report ID: {report_id!r}")
+    return client.sf.restful(f"analytics/reports/{report_id}/describe")
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+    }
+)
+@_sf_error_handler
+def get_report_metadata(report_id: str) -> dict:
+    """Get detailed metadata for a Salesforce report: structure, columns, filters,
+    groupings, and report type. Use this to understand a report's shape before running
+    it, analyzing its output, or mirroring its logic in a SOQL query.
+
+    Report IDs are 15 or 18 character strings starting with 00O. Find report IDs by
+    querying the Report object (SELECT Id, Name, DeveloperName, FolderName FROM Report)
+    or via the restful tool at analytics/reports/.
+
+    Returns three sections:
+    - reportMetadata: the report definition — reportType, reportFormat (TABULAR,
+      SUMMARY, MATRIX), detailColumns, aggregates, groupingsDown/Across,
+      reportFilters, reportBooleanFilter, standardDateFilter, sortBy.
+    - reportExtendedMetadata: display-friendly labels and data types for each
+      column and grouping (maps API names → labels).
+    - reportTypeMetadata: report-type-level info — joined objects, filter
+      operator map, date filter durations, and a SLIM list of field categories
+      as [{label, fieldCount}, ...]. The heavy per-field catalog is omitted
+      here to keep the payload small; use get_report_type_fields to drill
+      into one category at a time.
+
+    To run the report and get data rows, use the restful tool:
+    restful("analytics/reports/{id}", params={"includeDetails": "true"})."""
+    describe = _describe_report(report_id)
+    rtm = describe.get("reportTypeMetadata") or {}
+    categories = rtm.get("categories") or []
+    describe["reportTypeMetadata"] = {
+        **rtm,
+        "categories": [
+            {"label": c.get("label"), "fieldCount": len(c.get("columns") or {})}
+            for c in categories
+        ],
+    }
+    return describe
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+    }
+)
+@_sf_error_handler
+def get_report_type_fields(
+    report_id: str, category: str | None = None
+) -> dict:
+    """Drill into the per-field catalog of a report's report type. Use this after
+    get_report_metadata when you need to know what fields are AVAILABLE to add to
+    a report (not what's already in it).
+
+    - category=None (default): returns the list of categories with field counts.
+      Same slim view as reportTypeMetadata.categories in get_report_metadata.
+    - category="<label>": returns the full field dict for that one category,
+      where each field has label, dataType, filterable, picklist values, etc.
+      Pass the exact label (e.g. "Account: General", "Contact: General").
+
+    Typical agent workflow: call without category to see available categories →
+    call with the one you need → build/edit the report from those fields."""
+    describe = _describe_report(report_id)
+    categories = (describe.get("reportTypeMetadata") or {}).get("categories") or []
+    if category is None:
+        return {
+            "categories": [
+                {"label": c.get("label"), "fieldCount": len(c.get("columns") or {})}
+                for c in categories
+            ]
+        }
+    for c in categories:
+        if c.get("label") == category:
+            return c
+    valid = [c.get("label") for c in categories]
+    raise ValueError(
+        f"Category not found: {category!r}. Valid categories: {valid}"
+    )
 
 
 # --- Write tools (read_write and all) ---

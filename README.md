@@ -36,7 +36,7 @@ Control which tools are available by setting `SALESFORCE_ACCESS_MODE`:
 
 | Value | Tools Available | Use Case |
 |---|---|---|
-| `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record | Safe exploration, reporting, read-only integrations |
+| `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record, get_report_metadata, get_report_type_fields | Safe exploration, reporting, read-only integrations |
 | `read_write` | All read tools + create_record, update_record | Day-to-day CRM operations |
 | `all` (default) | All tools including delete_record, tooling_execute, apex_execute, restful | Full API access |
 
@@ -67,6 +67,8 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `run_soql_query` | read | true | — | — |
 | `run_sosl_search` | read | true | — | — |
 | `get_record` | read | true | — | — |
+| `get_report_metadata` | read | true | — | — |
+| `get_report_type_fields` | read | true | — | — |
 | `create_record` | read_write | false | — | — |
 | `update_record` | read_write | false | — | — |
 | `delete_record` | all | false | true | — |
@@ -89,6 +91,8 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `run_soql_query` | Execute a SOQL query |
 | `run_sosl_search` | Cross-object full-text search via SOSL |
 | `get_record` | Get a single record by ID |
+| `get_report_metadata` | Get detailed metadata for a report (columns, filters, groupings, report type) |
+| `get_report_type_fields` | Drill into the report type's field catalog — list categories, or fetch fields for one category |
 | `create_record` | Create a new record |
 | `update_record` | Update fields on an existing record |
 | `delete_record` | Permanently delete a record |

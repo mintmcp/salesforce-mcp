@@ -2,7 +2,6 @@
 
 import functools
 import os
-import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -142,12 +141,7 @@ def get_record(object_name: str, record_id: str) -> dict:
     return sf_object.get(record_id)
 
 
-_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9]{15,18}$")
-
-
 def _describe_report(report_id: str) -> dict:
-    if not _REPORT_ID_RE.match(report_id):
-        raise ValueError(f"Invalid Salesforce report ID: {report_id!r}")
     return client.sf.restful(f"analytics/reports/{report_id}/describe")
 
 

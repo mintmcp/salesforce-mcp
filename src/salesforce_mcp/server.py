@@ -1,6 +1,7 @@
 """Salesforce MCP server — tool definitions."""
 
 import functools
+import logging
 import os
 import re
 from typing import Any
@@ -8,7 +9,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from simple_salesforce.exceptions import SalesforceError
 
-from salesforce_mcp.client import client
+from salesforce_mcp.client import DEFAULT_MAX_DOWNLOAD_BYTES, client
+
+logger = logging.getLogger(__name__)
 
 mcp = FastMCP("Salesforce")
 
@@ -23,6 +26,30 @@ if _ACCESS_MODE not in ("read", "read_write", "all"):
 
 _WRITE_ENABLED = _ACCESS_MODE in ("read_write", "all")
 _ALL_ENABLED = _ACCESS_MODE == "all"
+
+
+def _max_download_bytes() -> int:
+    """Parse the download cap from env, falling back to the default on bad values
+    so a misconfigured var can't break server startup or silently disable downloads."""
+    raw = os.environ.get("SALESFORCE_MAX_DOWNLOAD_BYTES")
+    if raw is None:
+        return DEFAULT_MAX_DOWNLOAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    # Warn loudly: a broken/negative value must not silently loosen the cap.
+    logger.warning(
+        "Invalid SALESFORCE_MAX_DOWNLOAD_BYTES=%r; using default %d bytes.",
+        raw,
+        DEFAULT_MAX_DOWNLOAD_BYTES,
+    )
+    return DEFAULT_MAX_DOWNLOAD_BYTES
+
+
+_MAX_DOWNLOAD_BYTES = _max_download_bytes()
 
 
 def _sf_error_handler(fn):
@@ -230,6 +257,51 @@ def get_report_type_fields(
     raise ValueError(
         f"Category not found: {category!r}. Valid categories: {valid}"
     )
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+    }
+)
+@_sf_error_handler
+def list_files(record_id: str) -> list[dict]:
+    """List the files (ContentDocuments) attached to a Salesforce record.
+
+    Salesforce files are stored as ContentDocument/ContentVersion and linked to
+    records (Account, Opportunity, Case, etc.) via ContentDocumentLink. Use this
+    to discover what files a record has before downloading one.
+
+    record_id is a 15- or 18-character ID of the record the files are attached to
+    (e.g. an Account 001... or Case 500...).
+
+    Returns one entry per file: contentVersionId (068..., pass this to
+    download_file), contentDocumentId (069...), title, fileExtension, sizeBytes."""
+    return client.list_record_files(record_id)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+    }
+)
+@_sf_error_handler
+def download_file(content_id: str) -> dict:
+    """Download a file's contents from Salesforce by its content ID.
+
+    content_id accepts a ContentVersionId (068...) or a ContentDocumentId
+    (069...). For a 069 ID the latest published version is downloaded. Find these
+    IDs with list_files, or by querying ContentDocumentLink / ContentVersion.
+
+    Text-like files (csv, json, xml, txt, md, code/config files, etc.) that decode
+    as UTF-8 are returned as a string (encoding="text"); everything else, including
+    text-like files whose bytes aren't valid UTF-8, is returned base64 encoded
+    (encoding="base64"). Returns: filename, fileExtension, mimeType, sizeBytes,
+    encoding, content.
+
+    Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
+    default 10 MB) are rejected to avoid oversized responses."""
+    return client.download_content_version(content_id, _MAX_DOWNLOAD_BYTES)
 
 
 # --- Write tools (read_write and all) ---

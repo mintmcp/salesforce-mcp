@@ -14,3 +14,8 @@ dependencies = [
 
 [project.scripts]
 salesforce-mcp = "salesforce_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]

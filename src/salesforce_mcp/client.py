@@ -1,7 +1,9 @@
 """Salesforce client wrapper with lazy connection, validation, and caching."""
 
 import base64
+import binascii
 import mimetypes
+import os
 import re
 
 from simple_salesforce import Salesforce
@@ -182,6 +184,98 @@ class SalesforceClient:
             "sizeBytes": size,
             "encoding": encoding,
             "content": content,
+        }
+
+    def upload_content_version(
+        self,
+        filename: str,
+        content: str,
+        encoding: str,
+        max_bytes: int,
+        record_id: str | None = None,
+    ) -> dict:
+        """Upload a file as a ContentVersion, optionally attaching it to a record."""
+        # Validate record_id up front so we never create an orphan file we can't link.
+        if record_id is not None and not _RECORD_ID_RE.match(record_id):
+            raise ValueError(f"Invalid Salesforce record ID: {record_id!r}")
+
+        # Keep only the base name — never persist caller filesystem paths (or a
+        # Windows drive prefix) into Salesforce metadata via PathOnClient.
+        filename = os.path.basename(filename.replace("\\", "/")).strip()
+        if not filename:
+            raise ValueError("filename must be a non-empty file name.")
+
+        if encoding == "text":
+            data = content.encode("utf-8")
+        elif encoding == "base64":
+            try:
+                data = base64.b64decode(content, validate=True)
+            except (binascii.Error, ValueError) as e:
+                raise ValueError(
+                    "content is not valid base64; pass encoding='text' for plain text."
+                ) from e
+        else:
+            raise ValueError(
+                f"Invalid encoding: {encoding!r}. Must be 'base64' or 'text'."
+            )
+
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"File is too large to upload: {len(data)} bytes (limit {max_bytes}). "
+                "Raise SALESFORCE_MAX_DOWNLOAD_BYTES to override."
+            )
+
+        stem, dot_ext = os.path.splitext(filename)
+        title = stem or filename
+        version = self.sf.ContentVersion.create(
+            {
+                "Title": title,
+                "PathOnClient": filename,
+                "VersionData": base64.b64encode(data).decode("ascii"),
+            }
+        )
+        version_id = version["id"]
+        # Everything past the create can leave an orphaned file on failure; roll it
+        # back (best-effort) once we know the document id, so a failed attach or
+        # lookup doesn't litter the org.
+        document_id = None
+        try:
+            records = self.sf.query(
+                f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{version_id}'"
+            ).get("records", [])
+            document_id = records[0].get("ContentDocumentId") if records else None
+            if not document_id:
+                raise ValueError(
+                    f"Uploaded ContentVersion {version_id} but could not resolve its "
+                    "ContentDocumentId (the file may need manual cleanup)."
+                )
+
+            linked_entity_id = None
+            if record_id is not None:
+                self.sf.ContentDocumentLink.create(
+                    {
+                        "ContentDocumentId": document_id,
+                        "LinkedEntityId": record_id,
+                        "ShareType": "V",
+                        # Least-privilege: internal users only, not external/community.
+                        "Visibility": "InternalUsers",
+                    }
+                )
+                linked_entity_id = record_id
+        except Exception:
+            if document_id:
+                try:
+                    self.sf.ContentDocument.delete(document_id)
+                except Exception:
+                    pass
+            raise
+
+        return {
+            "contentVersionId": version_id,
+            "contentDocumentId": document_id,
+            "title": title,
+            "fileExtension": dot_ext.lstrip("."),
+            "linkedEntityId": linked_entity_id,
         }
 
 

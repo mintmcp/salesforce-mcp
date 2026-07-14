@@ -42,7 +42,7 @@ Control which tools are available by setting `SALESFORCE_ACCESS_MODE`:
 | Value | Tools Available | Use Case |
 |---|---|---|
 | `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record, list_files, download_file, get_report_metadata, get_report_type_fields | Safe exploration, reporting, read-only integrations |
-| `read_write` | All read tools + create_record, update_record | Day-to-day CRM operations |
+| `read_write` | All read tools + create_record, update_record, upload_file | Day-to-day CRM operations |
 | `all` (default) | All tools including delete_record, tooling_execute, apex_execute, restful | Full API access |
 
 ### Recommended Security Levels
@@ -80,6 +80,7 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `get_report_type_fields` | read | true | — | — |
 | `create_record` | read_write | false | — | — |
 | `update_record` | read_write | false | — | — |
+| `upload_file` | read_write | false | — | — |
 | `delete_record` | all | false | true | — |
 | `tooling_execute` | all | false | — | true |
 | `apex_execute` | all | false | — | true |
@@ -106,6 +107,7 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `get_report_type_fields` | Drill into the report type's field catalog — list categories, or fetch fields for one category |
 | `create_record` | Create a new record |
 | `update_record` | Update fields on an existing record |
+| `upload_file` | Upload a file (ContentVersion), optionally attaching it to a record |
 | `delete_record` | Permanently delete a record |
 | `tooling_execute` | Salesforce Tooling API (metadata, Apex classes, custom fields) |
 | `apex_execute` | Call custom Apex REST endpoints |

@@ -331,6 +331,41 @@ if _WRITE_ENABLED:
         }
     )
     @_sf_error_handler
+    def upload_file(
+        filename: str,
+        content: str,
+        record_id: str | None = None,
+        encoding: str = "base64",
+    ) -> dict:
+        """Upload a file to Salesforce (as a ContentVersion), optionally attaching it
+        to a record. This is the counterpart to download_file.
+
+        filename is the file's name including extension (e.g. "report.pdf"); it sets
+        the file's title and extension.
+
+        content is the file body. encoding controls how it's interpreted:
+        - "base64" (default): content is base64 — use this for any binary file, and
+          for the base64 payload returned by download_file.
+        - "text": content is plain UTF-8 text — the convenient path for text you
+          generate directly (csv, json, notes, etc.).
+
+        record_id (optional): a 15/18-char record ID (Account 001..., Case 500...,
+        etc.) to attach the file to, so it shows up in list_files(record_id). Omit
+        to create an unattached file.
+
+        Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
+        default 10 MB) are rejected. Returns: contentVersionId, contentDocumentId,
+        title, fileExtension, linkedEntityId (null when unattached)."""
+        return client.upload_content_version(
+            filename, content, encoding, _MAX_DOWNLOAD_BYTES, record_id
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+        }
+    )
+    @_sf_error_handler
     def update_record(
         object_name: str, record_id: str, data: dict[str, Any]
     ) -> dict:

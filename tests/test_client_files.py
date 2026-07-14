@@ -5,7 +5,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from salesforce_mcp.client import SalesforceClient
+from salesforce_mcp.client import SalesforceClient, _soql_id
+
+
+def test_soql_id_quotes_valid_ids():
+    assert _soql_id("068000000000001") == "'068000000000001'"
+    assert _soql_id("001000000000001AAA") == "'001000000000001AAA'"
+
+
+def test_soql_id_rejects_invalid_and_injection():
+    for bad in ["", "not-an-id!", "068' OR '1'='1", "12345", "0680000000000012"]:
+        with pytest.raises(ValueError, match="Invalid Salesforce ID"):
+            _soql_id(bad)
 
 
 def _client_with_sf(sf):

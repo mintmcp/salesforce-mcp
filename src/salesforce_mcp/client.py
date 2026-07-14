@@ -25,6 +25,17 @@ TEXT_EXTENSIONS = frozenset(
 DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 
 
+def _soql_id(value: str) -> str:
+    """Validate a Salesforce ID and return it as a quoted SOQL literal.
+
+    The single enforced injection boundary: SOQL has no bind parameters, so every
+    ID interpolated into a query goes through here rather than a bare f-string.
+    """
+    if not _RECORD_ID_RE.match(value):
+        raise ValueError(f"Invalid Salesforce ID: {value!r}")
+    return f"'{value}'"
+
+
 class SalesforceClient:
     def __init__(self) -> None:
         self._sf: Salesforce | None = None
@@ -82,14 +93,12 @@ class SalesforceClient:
 
     def list_record_files(self, record_id: str) -> list[dict]:
         """List files (ContentDocuments) attached to a record."""
-        if not _RECORD_ID_RE.match(record_id):
-            raise ValueError(f"Invalid Salesforce record ID: {record_id!r}")
         soql = (
             "SELECT ContentDocumentId, ContentDocument.LatestPublishedVersionId, "
             "ContentDocument.Title, ContentDocument.FileExtension, "
             "ContentDocument.ContentSize "
             "FROM ContentDocumentLink "
-            f"WHERE LinkedEntityId = '{record_id}'"
+            f"WHERE LinkedEntityId = {_soql_id(record_id)}"
         )
         # query_all pages through all ContentDocumentLink rows, not just the first batch.
         result = self.sf.query_all(soql)
@@ -119,10 +128,10 @@ class SalesforceClient:
             # Resolve the document's latest *published* version (matches list_files).
             where = (
                 "Id IN (SELECT LatestPublishedVersionId FROM ContentDocument "
-                f"WHERE Id = '{content_id}')"
+                f"WHERE Id = {_soql_id(content_id)})"
             )
         else:
-            where = f"Id = '{content_id}'"
+            where = f"Id = {_soql_id(content_id)}"
         result = self.sf.query(f"SELECT {cols} FROM ContentVersion WHERE {where}")
         records = result.get("records", [])
         if not records:
@@ -234,7 +243,7 @@ class SalesforceClient:
         document_id = None
         try:
             records = self.sf.query(
-                f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{version_id}'"
+                f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = {_soql_id(version_id)}"
             ).get("records", [])
             document_id = records[0].get("ContentDocumentId") if records else None
             if not document_id:

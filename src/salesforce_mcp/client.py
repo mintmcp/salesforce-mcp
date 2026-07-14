@@ -129,8 +129,7 @@ class SalesforceClient:
             raise ValueError(f"File not found for content ID: {content_id!r}")
         row = records[0]
         size = row.get("ContentSize")
-        # A missing size can't be checked against the cap — refuse rather than
-        # buffer an unbounded download into memory.
+        # Unknown size can't be capped — refuse rather than buffer it all into memory.
         if size is None:
             raise ValueError(
                 f"File size unknown for content ID: {content_id!r}; refusing to download."
@@ -142,11 +141,8 @@ class SalesforceClient:
             )
         version_id = row["Id"]
         url = f"{self.sf.base_url}sobjects/ContentVersion/{version_id}/VersionData"
-        # Route through simple_salesforce so Salesforce errors are normalized. Stream
-        # and abort past the cap so a redirected/mismatched VersionData payload can't
-        # exhaust connector memory (ContentSize is metadata, not a payload guarantee).
-        # `with` releases the streamed connection on every exit path (success,
-        # cap abort, or a mid-stream network error).
+        # Stream and abort past the cap so a mismatched/redirected payload can't
+        # exhaust memory; `with` frees the connection on every exit path.
         with self.sf._call_salesforce(
             "GET", url, name="download_content_version", stream=True
         ) as resp:
@@ -166,8 +162,7 @@ class SalesforceClient:
         title = row.get("Title") or version_id
         filename = f"{title}.{extension}" if extension else title
 
-        # Decode text-like files to a readable string; base64 everything else,
-        # including text files whose bytes aren't valid UTF-8.
+        # Text-like + valid UTF-8 → readable string; anything else → base64.
         if extension.lower() in TEXT_EXTENSIONS:
             try:
                 content, encoding = data.decode("utf-8"), "text"
@@ -199,8 +194,7 @@ class SalesforceClient:
         if record_id is not None and not _RECORD_ID_RE.match(record_id):
             raise ValueError(f"Invalid Salesforce record ID: {record_id!r}")
 
-        # Keep only the base name — never persist caller filesystem paths (or a
-        # Windows drive prefix) into Salesforce metadata via PathOnClient.
+        # Keep only the base name — don't persist caller paths/drive prefixes.
         filename = os.path.basename(filename.replace("\\", "/")).strip()
         if not filename:
             raise ValueError("filename must be a non-empty file name.")
@@ -235,9 +229,8 @@ class SalesforceClient:
             }
         )
         version_id = version["id"]
-        # Everything past the create can leave an orphaned file on failure; roll it
-        # back (best-effort) once we know the document id, so a failed attach or
-        # lookup doesn't litter the org.
+        # Any post-create failure can orphan the file; best-effort roll it back
+        # once the document id is known.
         document_id = None
         try:
             records = self.sf.query(

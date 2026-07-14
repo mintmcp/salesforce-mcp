@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salesforce-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Salesforce MCP server"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,3 +14,8 @@ dependencies = [
 
 [project.scripts]
 salesforce-mcp = "salesforce_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]

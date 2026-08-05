@@ -8,7 +8,8 @@ version = "0.2.0"
 description = "Salesforce MCP server"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.0.0",
+    # <2 is load-bearing: 2.0 removed mcp.server.fastmcp, which server.py imports.
+    "mcp[cli]>=1.0.0,<2",
     "simple-salesforce>=1.12.0",
 ]
 

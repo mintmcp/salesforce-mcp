@@ -5,7 +5,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from salesforce_mcp.client import SalesforceClient, _soql_id
+from salesforce_mcp.client import (
+    _MAX_FILENAME_BYTES,
+    MAX_RECORD_FILES,
+    SalesforceClient,
+    _soql_id,
+)
 
 
 def test_soql_id_quotes_valid_ids():
@@ -44,7 +49,7 @@ def _version_query_result(**overrides):
     return {"totalSize": 1, "records": [row]}
 
 
-def test_list_record_files_maps_fields_and_pages():
+def test_list_record_files_maps_fields():
     sf = MagicMock()
     sf.query_all.return_value = {
         "totalSize": 1,
@@ -71,9 +76,47 @@ def test_list_record_files_maps_fields_and_pages():
             "sizeBytes": 2048,
         }
     ]
-    # Must page through all rows, not just the first query batch.
     sf.query_all.assert_called_once()
-    sf.query.assert_not_called()
+
+
+def _file_row():
+    return {
+        "ContentDocumentId": "069000000000001",
+        "ContentDocument": {
+            "LatestPublishedVersionId": "068000000000001",
+            "Title": "spec",
+            "FileExtension": "pdf",
+            "ContentSize": 1,
+        },
+    }
+
+
+def test_list_record_files_queries_one_over_the_cap():
+    sf = MagicMock()
+    sf.query_all.return_value = {"totalSize": 0, "records": []}
+    c = _client_with_sf(sf)
+    c.list_record_files("001000000000001")
+    assert f"LIMIT {MAX_RECORD_FILES + 1}" in sf.query_all.call_args[0][0]
+
+
+def test_list_record_files_warns_and_slices_when_over_cap(caplog):
+    sf = MagicMock()
+    sf.query_all.return_value = {"records": [_file_row()] * (MAX_RECORD_FILES + 1)}
+    c = _client_with_sf(sf)
+    with caplog.at_level("WARNING"):
+        files = c.list_record_files("001000000000001")
+    assert len(files) == MAX_RECORD_FILES
+    assert "truncated" in caplog.text
+
+
+def test_list_record_files_exact_fit_is_not_reported_as_truncated(caplog):
+    sf = MagicMock()
+    sf.query_all.return_value = {"records": [_file_row()] * MAX_RECORD_FILES}
+    c = _client_with_sf(sf)
+    with caplog.at_level("WARNING"):
+        files = c.list_record_files("001000000000001")
+    assert len(files) == MAX_RECORD_FILES
+    assert "truncated" not in caplog.text
 
 
 def test_list_record_files_rejects_bad_id():
@@ -160,6 +203,15 @@ def test_download_rejects_oversize_actual_payload():
         c.download_content_version("068000000000001", max_bytes=1000)
 
 
+def test_download_rejects_short_read():
+    sf = MagicMock()
+    sf.query.return_value = _version_query_result(FileExtension="pdf", ContentSize=1000)
+    sf._call_salesforce.return_value = _stream_resp(b"xy")
+    c = _client_with_sf(sf)
+    with pytest.raises(ValueError, match="ended early"):
+        c.download_content_version("068000000000001", max_bytes=100000)
+
+
 def test_download_includes_mime_type():
     sf = MagicMock()
     sf.query.return_value = _version_query_result(FileExtension="pdf", ContentSize=4)
@@ -167,6 +219,33 @@ def test_download_includes_mime_type():
     c = _client_with_sf(sf)
     out = c.download_content_version("068000000000001", max_bytes=1000)
     assert out["mimeType"] == "application/pdf"
+
+
+def _download_with_title(title, extension="txt", payload=b"hi"):
+    sf = MagicMock()
+    sf.query.return_value = _version_query_result(
+        Title=title, FileExtension=extension, ContentSize=len(payload)
+    )
+    sf._call_salesforce.return_value = _stream_resp(payload)
+    return _client_with_sf(sf).download_content_version(
+        "068000000000001", max_bytes=1000
+    )
+
+
+def test_download_filename_is_sanitized_from_the_org_title():
+    out = _download_with_title("../../../.ssh/authorized_keys", extension="")
+    assert out["filename"] == "authorized_keys"
+
+
+def test_download_filename_falls_back_to_version_id_when_title_unusable():
+    out = _download_with_title("..")
+    assert out["filename"] == "068000000000001.txt"
+
+
+def test_download_filename_stays_within_the_byte_limit_once_joined():
+    out = _download_with_title("t" * 400, extension="txt")
+    assert len(out["filename"].encode("utf-8")) <= _MAX_FILENAME_BYTES
+    assert out["filename"].endswith(".txt")
 
 
 def test_download_document_id_uses_latest_published_version():

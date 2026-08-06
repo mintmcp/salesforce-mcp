@@ -95,7 +95,7 @@ def test_upload_links_to_record_when_record_id_given():
     assert link["ContentDocumentId"] == "069000000000001"
     assert link["LinkedEntityId"] == "001000000000001"
     assert link["ShareType"] == "V"
-    assert link["Visibility"] == "InternalUsers"
+    assert "Visibility" not in link
     assert out["linkedEntityId"] == "001000000000001"
 
 
@@ -130,13 +130,12 @@ def test_upload_strips_path_from_filename():
     assert out["fileExtension"] == "pdf"
 
 
-def test_upload_strips_windows_path_from_filename():
+def test_upload_rejects_filename_that_sanitizes_to_nothing():
     sf = _sf_for_upload()
     c = _client_with_sf(sf)
-    c.upload_content_version(
-        "C:\\Users\\alice\\report.csv", "aGk=", "base64", max_bytes=1000
-    )
-    assert sf.ContentVersion.create.call_args[0][0]["PathOnClient"] == "report.csv"
+    with pytest.raises(ValueError, match="non-empty file name"):
+        c.upload_content_version("../..", "aGk=", "base64", max_bytes=1000)
+    sf.ContentVersion.create.assert_not_called()
 
 
 def test_upload_rejects_empty_filename():
@@ -145,6 +144,18 @@ def test_upload_rejects_empty_filename():
     with pytest.raises(ValueError, match="non-empty file name"):
         c.upload_content_version("   ", "aGk=", "base64", max_bytes=1000)
     sf.ContentVersion.create.assert_not_called()
+
+
+def test_upload_logs_orphan_when_rollback_fails(caplog):
+    sf = _sf_for_upload()
+    sf.ContentDocumentLink.create.side_effect = RuntimeError("link failed")
+    sf.ContentDocument.delete.side_effect = RuntimeError("delete failed")
+    c = _client_with_sf(sf)
+    with pytest.raises(RuntimeError, match="link failed"):
+        c.upload_content_version(
+            "note.txt", "hi", "text", max_bytes=1000, record_id="001000000000001"
+        )
+    assert "069000000000001" in caplog.text
 
 
 def test_upload_raises_when_document_id_unresolved():

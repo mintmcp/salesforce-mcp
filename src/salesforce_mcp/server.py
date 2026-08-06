@@ -276,7 +276,10 @@ def list_files(record_id: str) -> list[dict]:
     (e.g. an Account 001... or Case 500...).
 
     Returns one entry per file: contentVersionId (068..., pass this to
-    download_file), contentDocumentId (069...), title, fileExtension, sizeBytes."""
+    download_file), contentDocumentId (069...), title, fileExtension, sizeBytes.
+
+    At most 200 files are returned. If a record has more, use run_soql_query
+    against ContentDocumentLink to page through them yourself."""
     return client.list_record_files(record_id)
 
 

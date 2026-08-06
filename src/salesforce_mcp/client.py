@@ -32,17 +32,13 @@ DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 # Stated verbatim in the list_files tool docstring; update both together.
 MAX_RECORD_FILES = 200
 
-# Invisible characters let a name render as a different extension than it carries;
-# the rest are simply not writable on Win32.
+# Invisible characters let a name render with a different extension than it carries;
+# the rest are not writable on Win32.
 _UNSAFE_CHARS_RE = re.compile(
-    "[\x00-\x1f\x7f-\x9f"
-    "\u00ad\u061c\u180e"  # soft hyphen, arabic letter mark, vowel separator
-    "\u115f\u1160"  # hangul fillers, the NFKC target of other invisible fillers
-    "\u200b-\u200f"  # zero-width chars and LTR/RTL marks
-    "\u2028\u2029"  # line / paragraph separators
-    "\u202a-\u202e\u2060-\u2064\u2066-\u2069"  # bidi controls and word joiners
-    "\ud800-\udfff"  # lone surrogates, which are not encodable
-    "\ufeff\ufff9-\ufffb"  # BOM and interlinear annotation marks
+    "[\x00-\x1f\x7f-\x9f"  # C0, C1, DEL
+    "\u00ad\u061c\u180e\u115f\u1160\u200b-\u200f\u2060-\u2064\ufeff\ufff9-\ufffb"
+    "\u2028\u2029\u202a-\u202e\u2066-\u2069"  # separators and bidi controls
+    "\ud800-\udfff"  # lone surrogates, which cannot be encoded
     '*?"<>|]'
 )
 _WINDOWS_RESERVED = frozenset(
@@ -51,29 +47,33 @@ _WINDOWS_RESERVED = frozenset(
     | {f"lpt{i}" for i in range(1, 10)}
 )
 _MAX_FILENAME_BYTES = 255
-# Dots and whitespace together in one pass: stripping them in separate passes lets
-# one re-expose the other (U+1680 is whitespace but is not in a ". " strip set).
+# Win32 drops trailing dots and spaces, so a name ending in them lands as a
+# different file. One pass over both: separate passes let one re-expose the other.
 _TRAILING_JUNK_RE = re.compile(r"[\s.]+$")
+
+
+def _strip_path_syntax(name: str) -> str:
+    """Drive-relative ("C:x") and NTFS stream ("x.txt:y") forms survive basename()."""
+    return ntpath.basename(posixpath.basename(name)).replace(":", "")
+
+
+def _is_windows_device(name: str) -> bool:
+    """Win32 trims a component's trailing spaces before resolving device names."""
+    return name.split(".")[0].strip().lower() in _WINDOWS_RESERVED
 
 
 def _safe_filename(name: str) -> str:
     """Reduce an arbitrary name to a bare file name, or '' if nothing usable remains.
 
-    Names arrive both from the MCP client and from the org's free-text Title, and
-    land on the caller's disk, so neither end is trusted. Normalization sits in the
-    middle because compatibility forms both decompose into separators and expand
-    into characters the class rejects, so it has to be stripped on either side.
+    Names arrive from the MCP client and from the org's free-text Title, and land on
+    the caller's disk, so neither end is trusted.
     """
+    # NFKC both decomposes into separators and expands into rejected characters,
+    # so the strip runs on either side of it.
     name = _UNSAFE_CHARS_RE.sub("", name)
     name = _UNSAFE_CHARS_RE.sub("", unicodedata.normalize("NFKC", name))
-    name = ntpath.basename(posixpath.basename(name))
-    # Colons carry drive-relative ("C:x") and NTFS stream ("x.txt:y") meaning.
-    name = name.replace(":", "")
-    # Win32 drops trailing dots and spaces, so a name ending in them lands as another.
-    name = _TRAILING_JUNK_RE.sub("", name.lstrip())
-    # Win32 trims a component's trailing spaces before resolving device names,
-    # so "con .txt" still reaches the console device.
-    if not name or name.split(".")[0].strip().lower() in _WINDOWS_RESERVED:
+    name = _TRAILING_JUNK_RE.sub("", _strip_path_syntax(name).lstrip())
+    if not name or _is_windows_device(name):
         return ""
     return _truncate_filename(name)
 
@@ -87,7 +87,6 @@ def _truncate_filename(name: str) -> str:
         stem, dot, ext = name, "", ""
     budget = _MAX_FILENAME_BYTES - len((dot + ext).encode("utf-8"))
     stem = stem.encode("utf-8")[:budget].decode("utf-8", "ignore")
-    # The cut can land on a trailing dot or space, which Win32 would then drop.
     return f"{_TRAILING_JUNK_RE.sub('', stem)}{dot}{ext}"
 
 
@@ -165,14 +164,12 @@ class SalesforceClient:
             "ContentDocument.ContentSize "
             "FROM ContentDocumentLink "
             f"WHERE LinkedEntityId = {_soql_id(record_id)} "
-            # Stable sort so the capped window is reproducible across calls.
             "ORDER BY ContentDocumentId "
             # One over the cap, so a full page can be told apart from an exact fit.
             f"LIMIT {MAX_RECORD_FILES + 1}"
         )
-        # The cap keeps a heavily-attached record from producing a tool response too
-        # large to consume; query_all still pages, since the org's batch size may sit
-        # below the cap and would otherwise under-return.
+        # query_all, not query: the org's batch size can sit below the cap and would
+        # otherwise under-return.
         result = self.sf.query_all(soql)
         records = result.get("records", [])
         if len(records) > MAX_RECORD_FILES:
@@ -229,7 +226,6 @@ class SalesforceClient:
                 f"(limit {max_bytes}). Raise SALESFORCE_MAX_DOWNLOAD_BYTES to override."
             )
         version_id = row["Id"]
-        # Every other ID on this path is guarded; keep the one going into a URL uniform.
         if not _CONTENT_ID_RE.match(version_id):
             raise ValueError(f"Salesforce returned a malformed version ID: {version_id!r}")
         url = f"{self.sf.base_url}sobjects/ContentVersion/{version_id}/VersionData"
@@ -259,7 +255,6 @@ class SalesforceClient:
 
         extension = _safe_filename(row.get("FileExtension") or "")
         title = _safe_filename(row.get("Title") or "") or version_id
-        # Budget the assembled name, not the pieces — each fits while the join may not.
         filename = _truncate_filename(f"{title}.{extension}" if extension else title)
 
         # Text-like + valid UTF-8 → readable string; anything else → base64.
@@ -276,7 +271,6 @@ class SalesforceClient:
             "filename": filename,
             "fileExtension": extension,
             "mimeType": mime_type,
-            # The bytes actually returned, so size never disagrees with content.
             "sizeBytes": total,
             "encoding": encoding,
             "content": content,
@@ -285,9 +279,8 @@ class SalesforceClient:
     def _link_document(self, document_id: str, record_id: str) -> None:
         """Attach a ContentDocument to a record via ContentDocumentLink.
 
-        Visibility is deliberately unset: each explicit value is rejected or
-        over-shares in one org shape or the other, while the default Salesforce
-        picks is correct for both. Do not set it.
+        Visibility is deliberately unset: the permitted value depends on the linked
+        entity type, and Salesforce picks a valid one. Any literal breaks some type.
         """
         self.sf.ContentDocumentLink.create(
             {
@@ -368,8 +361,8 @@ class SalesforceClient:
                 try:
                     self.sf.ContentDocument.delete(document_id)
                 except Exception:
-                    # Swallowed so the original failure propagates; the leak needs
-                    # manual cleanup in the org, so it must not be filtered out.
+                    # Swallowed so the original failure propagates. The leak needs
+                    # manual cleanup, so it must not be filtered out of logs.
                     try:
                         logger.error(
                             "Rollback failed; ContentDocument %s is orphaned in the org.",

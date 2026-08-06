@@ -4,9 +4,12 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-# A connector's saved startup-command is not re-derived when the image changes, so
-# install into the venv path AND put it on PATH — both invocations must resolve.
-RUN python -m venv /app/.venv && /app/.venv/bin/pip install --no-cache-dir .
+# A connector's saved startup-command is not re-derived when the image changes, and
+# the runtime spawns the child with a default PATH that ignores ENV PATH, so the
+# script has to resolve at the venv path and on the default PATH.
+RUN python -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir . \
+    && ln -s /app/.venv/bin/salesforce-mcp /usr/local/bin/salesforce-mcp
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Salesforce credentials are supplied per-user by the MintMCP runtime (stdio

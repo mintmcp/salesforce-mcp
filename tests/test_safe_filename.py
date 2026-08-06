@@ -38,8 +38,7 @@ from salesforce_mcp.client import _MAX_FILENAME_BYTES, _safe_filename
         ("\uff0e\uff0e\uff0f\uff0e\uff0e\uff0fetc\uff0fpasswd", "passwd"),
         # Not writable on Win32.
         ('re*p?o"r<t>|.txt', "report.txt"),
-        # NFKC expands these into the characters above, so the class is applied
-        # on both sides of normalization.
+        # NFKC expands these into the characters above.
         ("x⁇y.txt", "xy.txt"),
         ("x｜y.txt", "xy.txt"),
         ("x﹡y.txt", "xy.txt"),
@@ -49,17 +48,15 @@ from salesforce_mcp.client import _MAX_FILENAME_BYTES, _safe_filename
         ("con .txt", ""),
         ("CON .txt", ""),
         ("com1 .txt", ""),
-        # NFKC folds these spaces to U+0020, manufacturing the same bypass.
+        # NFKC folds these spaces to U+0020.
         ("con\xa0.txt", ""),
         ("con　.txt", ""),
-        # Unencodable, and would otherwise fault during truncation.
+        # Unencodable.
         ("\ud800evil.txt", "evil.txt"),
-        # U+1680 is whitespace to str.strip() but absent from a ". " strip set, so
-        # stripping dots and whitespace in separate passes re-exposes the dot.
         (".. .", ""),
         (". .", ""),
         ("a. .", "a"),
-        # Invisible, so two distinct titles would render identically.
+        # Invisible: two distinct titles would render identically.
         ("report­.pdf", "report.pdf"),
         ("report؜.pdf", "report.pdf"),
         ("reportㅤ.pdf", "report.pdf"),

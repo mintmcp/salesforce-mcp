@@ -9,7 +9,11 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from simple_salesforce.exceptions import SalesforceError
 
-from salesforce_mcp.client import DEFAULT_MAX_DOWNLOAD_BYTES, client
+from salesforce_mcp.client import (
+    DEFAULT_MAX_DOWNLOAD_BYTES,
+    DEFAULT_MAX_TEXT_CHARS,
+    client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +32,12 @@ _WRITE_ENABLED = _ACCESS_MODE in ("read_write", "all")
 _ALL_ENABLED = _ACCESS_MODE == "all"
 
 
-def _max_download_bytes() -> int:
-    """Parse the download cap from env, falling back to the default on bad values
-    so a misconfigured var can't break server startup or silently disable downloads."""
-    raw = os.environ.get("SALESFORCE_MAX_DOWNLOAD_BYTES")
+def _positive_int_env(var_name: str, default: int) -> int:
+    """Parse a positive-int cap from env, falling back to the default on bad values
+    so a misconfigured var can't break server startup or silently disable the cap."""
+    raw = os.environ.get(var_name)
     if raw is None:
-        return DEFAULT_MAX_DOWNLOAD_BYTES
+        return default
     try:
         value = int(raw)
     except ValueError:
@@ -41,15 +45,14 @@ def _max_download_bytes() -> int:
     if value > 0:
         return value
     # Warn loudly: a broken/negative value must not silently loosen the cap.
-    logger.warning(
-        "Invalid SALESFORCE_MAX_DOWNLOAD_BYTES=%r; using default %d bytes.",
-        raw,
-        DEFAULT_MAX_DOWNLOAD_BYTES,
-    )
-    return DEFAULT_MAX_DOWNLOAD_BYTES
+    logger.warning("Invalid %s=%r; using default %d.", var_name, raw, default)
+    return default
 
 
-_MAX_DOWNLOAD_BYTES = _max_download_bytes()
+_MAX_DOWNLOAD_BYTES = _positive_int_env(
+    "SALESFORCE_MAX_DOWNLOAD_BYTES", DEFAULT_MAX_DOWNLOAD_BYTES
+)
+_MAX_TEXT_CHARS = _positive_int_env("SALESFORCE_MAX_TEXT_CHARS", DEFAULT_MAX_TEXT_CHARS)
 
 
 def _sf_error_handler(fn):
@@ -299,9 +302,43 @@ def download_file(content_id: str) -> dict:
     (encoding="base64"). Returns: filename, fileExtension, mimeType, sizeBytes,
     encoding, content.
 
+    To read a PDF's contents, use read_file_text instead — the base64 payload
+    this tool returns for PDFs is not human- or model-readable.
+
     Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
     default 10 MB) are rejected to avoid oversized responses."""
     return client.download_content_version(content_id, _MAX_DOWNLOAD_BYTES)
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+    }
+)
+@_sf_error_handler
+def read_file_text(content_id: str, pages: str | None = None) -> dict:
+    """Read a file's text content from Salesforce. Extracts the text of PDFs and
+    decodes text files (csv, json, txt, etc.); use this instead of download_file
+    whenever you need to know what a file says.
+
+    content_id accepts a ContentVersionId (068...) or a ContentDocumentId
+    (069...); find these with list_files. pages (PDFs only) selects 1-indexed
+    pages, e.g. "3", "1-5", or "2,5-7"; omit it to read the whole document.
+
+    Returns: filename, mimeType, sizeBytes, pageCount, pagesReturned, text
+    (pages are separated by "--- page N ---" markers), truncated. When the
+    output exceeds the text limit (SALESFORCE_MAX_TEXT_CHARS, default 100000)
+    truncated is true and truncatedAtPage says where extraction stopped — call
+    again with pages starting there to continue. A PDF with no text layer
+    (scanned images) returns empty text plus a note; OCR is not supported.
+    Password-protected PDFs and non-UTF-8 binary files are errors — for raw
+    bytes use download_file.
+
+    Files larger than the download limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
+    default 10 MB) are rejected."""
+    return client.read_content_version_text(
+        content_id, _MAX_DOWNLOAD_BYTES, _MAX_TEXT_CHARS, pages
+    )
 
 
 # --- Write tools (read_write and all) ---

@@ -32,7 +32,8 @@ SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
 
 **File downloads (optional):**
 ```
-SALESFORCE_MAX_DOWNLOAD_BYTES=10485760   # max download_file size in bytes (default 10 MB)
+SALESFORCE_MAX_DOWNLOAD_BYTES=10485760   # max download_file/read_file_text size in bytes (default 10 MB)
+SALESFORCE_MAX_TEXT_CHARS=100000         # max characters read_file_text returns per call (default 100k)
 ```
 
 ## Access Mode
@@ -41,7 +42,7 @@ Control which tools are available by setting `SALESFORCE_ACCESS_MODE`:
 
 | Value | Tools Available | Use Case |
 |---|---|---|
-| `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record, list_files, download_file, get_report_metadata, get_report_type_fields | Safe exploration, reporting, read-only integrations |
+| `read` | list_objects, describe_object, run_soql_query, run_sosl_search, get_record, list_files, download_file, read_file_text, get_report_metadata, get_report_type_fields | Safe exploration, reporting, read-only integrations |
 | `read_write` | All read tools + create_record, update_record, upload_file | Day-to-day CRM operations |
 | `all` (default) | All tools including delete_record, tooling_execute, apex_execute, restful | Full API access |
 
@@ -61,7 +62,7 @@ SALESFORCE_ACCESS_MODE=read
 
 > **Tip:** When using this server with [MintMCP](https://mintmcp.com), you can configure fine-grained per-tool permissions directly in MintMCP instead of using the env var. This gives you more granular control (e.g., allow create but not update) without needing to restart the server.
 
-> **Note:** `download_file` returns file contents inline and is read-only, but it broadens the data-exfiltration surface beyond ordinary record reads. Consider granting it separately in MintMCP rather than treating it as equivalent to the other `read` tools, and cap size with `SALESFORCE_MAX_DOWNLOAD_BYTES`.
+> **Note:** `download_file` and `read_file_text` return file contents inline and are read-only, but they broaden the data-exfiltration surface beyond ordinary record reads. Consider granting them separately in MintMCP rather than treating them as equivalent to the other `read` tools, and cap size with `SALESFORCE_MAX_DOWNLOAD_BYTES` (and text volume with `SALESFORCE_MAX_TEXT_CHARS`).
 
 ### Tool Permissions by Access Mode
 
@@ -76,6 +77,7 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `get_record` | read | true | — | — |
 | `list_files` | read | true | — | — |
 | `download_file` | read | true | — | — |
+| `read_file_text` | read | true | — | — |
 | `get_report_metadata` | read | true | — | — |
 | `get_report_type_fields` | read | true | — | — |
 | `create_record` | read_write | false | — | — |
@@ -103,6 +105,7 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `get_record` | Get a single record by ID |
 | `list_files` | List files (ContentDocuments) attached to a record |
 | `download_file` | Download a file's contents by ContentVersionId or ContentDocumentId |
+| `read_file_text` | Read a file's text: extracts PDF text (with page selection), decodes text files |
 | `get_report_metadata` | Get detailed metadata for a report (columns, filters, groupings, report type) |
 | `get_report_type_fields` | Drill into the report type's field catalog — list categories, or fetch fields for one category |
 | `create_record` | Create a new record |

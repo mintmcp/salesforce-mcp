@@ -2,10 +2,13 @@
 
 import base64
 import binascii
+import io
 import mimetypes
 import os
 import re
 
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 from simple_salesforce import Salesforce
 from simple_salesforce.api import SFType
 
@@ -23,6 +26,59 @@ TEXT_EXTENSIONS = frozenset(
     }
 )
 DEFAULT_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
+DEFAULT_MAX_TEXT_CHARS = 100_000
+
+
+_PAGE_SPEC_PART_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
+
+
+def _parse_page_spec(spec: str, page_count: int) -> list[int]:
+    """Parse a 1-indexed page spec like '3', '1-5', or '2,5-7' into page numbers.
+
+    Preserves the order given, drops duplicates, and validates every page
+    against the document's page count so a bad spec fails loudly instead of
+    silently returning fewer pages.
+    """
+    pages: list[int] = []
+    seen: set[int] = set()
+    for part in spec.split(","):
+        match = _PAGE_SPEC_PART_RE.match(part.strip())
+        if not match:
+            raise ValueError(
+                f"Invalid pages value: {spec!r}. Use forms like '3', '1-5', or '2,5-7'."
+            )
+        start = int(match.group(1))
+        end = int(match.group(2) or start)
+        if start < 1 or end < start:
+            raise ValueError(
+                f"Invalid pages value: {spec!r}. Pages are 1-indexed and ranges "
+                "must run low to high."
+            )
+        if end > page_count:
+            raise ValueError(
+                f"Page {end} is out of range: the PDF has {page_count} page(s)."
+            )
+        for page in range(start, end + 1):
+            if page not in seen:
+                seen.add(page)
+                pages.append(page)
+    if not pages:
+        raise ValueError(f"Invalid pages value: {spec!r}.")
+    return pages
+
+
+def _format_page_ranges(pages: list[int]) -> str:
+    """Compress a page-number list back into a compact spec, e.g. [1,2,3,5] -> '1-3,5'."""
+    ranges: list[str] = []
+    start = prev = pages[0]
+    for page in pages[1:]:
+        if page == prev + 1:
+            prev = page
+            continue
+        ranges.append(str(start) if start == prev else f"{start}-{prev}")
+        start = prev = page
+    ranges.append(str(start) if start == prev else f"{start}-{prev}")
+    return ",".join(ranges)
 
 
 def _soql_id(value: str) -> str:
@@ -116,8 +172,13 @@ class SalesforceClient:
             )
         return files
 
-    def download_content_version(self, content_id: str, max_bytes: int) -> dict:
-        """Download a file's bytes by ContentVersionId (068) or ContentDocumentId (069)."""
+    def _fetch_version_bytes(self, content_id: str, max_bytes: int) -> tuple[dict, bytes]:
+        """Resolve a content ID to its ContentVersion row and download its bytes.
+
+        Shared fetch core for download_content_version and
+        read_content_version_text: validation, 068/069 resolution, size caps,
+        and the streamed VersionData request all live here.
+        """
         if not _CONTENT_ID_RE.match(content_id):
             raise ValueError(
                 f"Invalid content ID: {content_id!r}. Expected a ContentVersionId "
@@ -166,9 +227,13 @@ class SalesforceClient:
                     )
                 chunks.append(chunk)
             data = b"".join(chunks)
+        return row, data
 
+    def download_content_version(self, content_id: str, max_bytes: int) -> dict:
+        """Download a file's bytes by ContentVersionId (068) or ContentDocumentId (069)."""
+        row, data = self._fetch_version_bytes(content_id, max_bytes)
         extension = row.get("FileExtension") or ""
-        title = row.get("Title") or version_id
+        title = row.get("Title") or row["Id"]
         filename = f"{title}.{extension}" if extension else title
 
         # Text-like + valid UTF-8 → readable string; anything else → base64.
@@ -185,10 +250,131 @@ class SalesforceClient:
             "filename": filename,
             "fileExtension": extension,
             "mimeType": mime_type,
-            "sizeBytes": size,
+            "sizeBytes": row.get("ContentSize"),
             "encoding": encoding,
             "content": content,
         }
+
+    def read_content_version_text(
+        self,
+        content_id: str,
+        max_bytes: int,
+        max_chars: int,
+        pages: str | None = None,
+    ) -> dict:
+        """Extract readable text from a file: PDFs via pypdf, everything else as UTF-8."""
+        row, data = self._fetch_version_bytes(content_id, max_bytes)
+        extension = (row.get("FileExtension") or "").lower()
+        title = row.get("Title") or row["Id"]
+        filename = f"{title}.{extension}" if extension else title
+
+        # Extensions in Salesforce can be missing or wrong; the magic bytes aren't.
+        if extension == "pdf" or data.startswith(b"%PDF-"):
+            return self._extract_pdf_text(filename, row, data, max_chars, pages)
+
+        if pages is not None:
+            raise ValueError(
+                f"pages only applies to PDFs; {filename!r} is not a PDF."
+            )
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(
+                f"{filename!r} is neither a PDF nor valid UTF-8 text. Use "
+                "download_file for its raw contents (base64)."
+            ) from None
+        truncated = len(text) > max_chars
+        return {
+            "filename": filename,
+            "mimeType": mimetypes.guess_type(filename)[0],
+            "sizeBytes": row.get("ContentSize"),
+            "pageCount": None,
+            "pagesReturned": None,
+            "text": text[:max_chars],
+            "truncated": truncated,
+        }
+
+    def _extract_pdf_text(
+        self,
+        filename: str,
+        row: dict,
+        data: bytes,
+        max_chars: int,
+        pages: str | None,
+    ) -> dict:
+        try:
+            reader = PdfReader(io.BytesIO(data))
+        except (PyPdfError, ValueError) as e:
+            raise ValueError(f"{filename!r} is not a readable PDF.") from e
+        if reader.is_encrypted:
+            # Files encrypted with only an owner password open with the empty
+            # user password; anything stronger is unreadable without credentials.
+            try:
+                decrypted = reader.decrypt("")
+            except Exception as e:
+                raise ValueError(
+                    f"{filename!r} is password-protected; cannot extract text."
+                ) from e
+            if not decrypted:
+                raise ValueError(
+                    f"{filename!r} is password-protected; cannot extract text."
+                )
+
+        page_count = len(reader.pages)
+        page_numbers = (
+            _parse_page_spec(pages, page_count)
+            if pages is not None
+            else list(range(1, page_count + 1))
+        )
+
+        parts: list[str] = []
+        included: list[int] = []
+        total = 0
+        truncated = False
+        truncated_at = None
+        has_content = False
+        for number in page_numbers:
+            try:
+                page_text = reader.pages[number - 1].extract_text() or ""
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to extract text from page {number} of {filename!r}."
+                ) from e
+            if page_text.strip():
+                has_content = True
+            piece = f"--- page {number} ---\n\n{page_text}"
+            if parts:
+                piece = "\n\n" + piece
+            if total + len(piece) > max_chars:
+                parts.append(piece[: max_chars - total])
+                included.append(number)
+                truncated = True
+                truncated_at = number
+                break
+            parts.append(piece)
+            included.append(number)
+            total += len(piece)
+
+        result = {
+            "filename": filename,
+            "mimeType": "application/pdf",
+            "sizeBytes": row.get("ContentSize"),
+            "pageCount": page_count,
+            "pagesReturned": _format_page_ranges(included) if included else "",
+            "text": "".join(parts),
+            "truncated": truncated,
+        }
+        if truncated:
+            result["truncatedAtPage"] = truncated_at
+        elif not has_content:
+            # Page markers alone aren't content — return empty text so agents
+            # don't mistake the markers for the document.
+            result["text"] = ""
+            result["note"] = (
+                "No extractable text found; this PDF likely contains scanned "
+                "images. OCR is not supported."
+            )
+        return result
 
     def upload_content_version(
         self,

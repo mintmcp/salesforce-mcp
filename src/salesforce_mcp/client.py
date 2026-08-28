@@ -332,6 +332,7 @@ class SalesforceClient:
         total = 0
         truncated = False
         truncated_at = None
+        oversize_note = None
         has_content = False
         for number in page_numbers:
             try:
@@ -342,15 +343,24 @@ class SalesforceClient:
                 ) from e
             if page_text.strip():
                 has_content = True
-            piece = f"--- page {number} ---\n\n{page_text}"
-            if parts:
-                piece = "\n\n" + piece
+            base = f"--- page {number} ---\n\n{page_text}"
+            piece = base if not parts else "\n\n" + base
             if total + len(piece) > max_chars:
                 # Drop the page that doesn't fit entirely: a partial fragment
                 # would be re-sent when the caller continues from this page,
                 # duplicating content in the model's context.
                 truncated = True
                 truncated_at = number
+                if len(base) > max_chars:
+                    # This page can't fit even in a fresh call, so continuing
+                    # from it would return empty forever — say so explicitly to
+                    # keep agents out of a retry loop.
+                    oversize_note = (
+                        f"Page {number} alone is {len(base)} characters, over the "
+                        f"{max_chars}-character limit, and can never be returned at "
+                        "the current limit. Do not request this page again: skip it "
+                        "with a pages selection, or raise SALESFORCE_MAX_TEXT_CHARS."
+                    )
                 break
             parts.append(piece)
             included.append(number)
@@ -367,6 +377,8 @@ class SalesforceClient:
         }
         if truncated:
             result["truncatedAtPage"] = truncated_at
+            if oversize_note:
+                result["note"] = oversize_note
         elif not has_content:
             # Page markers alone aren't content — return empty text so agents
             # don't mistake the markers for the document.

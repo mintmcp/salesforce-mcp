@@ -156,9 +156,11 @@ def test_read_pdf_truncates_on_page_boundary():
     assert "second" not in out["text"]
     assert "--- page 2 ---" not in out["text"]
     assert len(out["text"]) <= 40
+    # Page 2 would fit in a fresh call, so continuation works — no dead-end note.
+    assert "note" not in out
 
 
-def test_read_pdf_first_page_over_limit_returns_empty():
+def test_read_pdf_first_page_over_limit_returns_empty_with_note():
     data = _pdf_bytes(["this page alone is bigger than the cap"])
     client, _ = _client_for(data)
     out = client.read_content_version_text("068000000000001", 10_000_000, 10)
@@ -166,6 +168,21 @@ def test_read_pdf_first_page_over_limit_returns_empty():
     assert out["truncatedAtPage"] == 1
     assert out["pagesReturned"] == ""
     assert out["text"] == ""
+    assert "can never be returned" in out["note"]
+    assert "Do not request this page again" in out["note"]
+
+
+def test_read_pdf_oversize_middle_page_flagged_in_note():
+    data = _pdf_bytes(["short", "x" * 60, "short again"])
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 50)
+    assert out["pagesReturned"] == "1"
+    assert out["truncated"] is True
+    assert out["truncatedAtPage"] == 2
+    # Page 2 exceeds the cap even alone, so the dead-end warning fires despite
+    # page 1 having been returned.
+    assert "Page 2 alone" in out["note"]
+    assert "can never be returned" in out["note"]
 
 
 def test_read_pdf_magic_bytes_beats_wrong_extension():

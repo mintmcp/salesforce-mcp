@@ -357,9 +357,9 @@ class SalesforceClient:
                     # keep agents out of a retry loop.
                     oversize_note = (
                         f"Page {number} alone is {len(base)} characters, over the "
-                        f"{max_chars}-character limit, and can never be returned at "
-                        "the current limit. Do not request this page again: skip it "
-                        "with a pages selection, or raise SALESFORCE_MAX_TEXT_CHARS."
+                        f"{max_chars}-character limit, and can never be returned. "
+                        "Do not request this page again: skip past it with a pages "
+                        "selection."
                     )
                 break
             parts.append(piece)

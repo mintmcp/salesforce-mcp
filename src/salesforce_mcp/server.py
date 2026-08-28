@@ -52,7 +52,9 @@ def _positive_int_env(var_name: str, default: int) -> int:
 _MAX_DOWNLOAD_BYTES = _positive_int_env(
     "SALESFORCE_MAX_DOWNLOAD_BYTES", DEFAULT_MAX_DOWNLOAD_BYTES
 )
-_MAX_TEXT_CHARS = _positive_int_env("SALESFORCE_MAX_TEXT_CHARS", DEFAULT_MAX_TEXT_CHARS)
+# Deliberately not env-configurable: the text cap is a server invariant, not
+# a deployment knob.
+_MAX_TEXT_CHARS = DEFAULT_MAX_TEXT_CHARS
 
 
 def _sf_error_handler(fn):
@@ -327,13 +329,13 @@ def read_file_text(content_id: str, pages: str | None = None) -> dict:
 
     Returns: filename, mimeType, sizeBytes, pageCount, pagesReturned, text
     (pages are separated by "--- page N ---" markers), truncated. When the
-    output would exceed the text limit (SALESFORCE_MAX_TEXT_CHARS, default
-    100000), only pages that fit completely are returned: truncated is true
-    and truncatedAtPage is the first page NOT included — continue by calling
-    again with pages starting there; returned content never overlaps. A single
-    page bigger than the limit can never be returned: the response says so in
-    a note — do not re-request that page; skip past it with pages or raise
-    the limit. A PDF with no text layer
+    output would exceed the fixed 100,000-character text limit, only pages
+    that fit completely are returned: truncated is true and truncatedAtPage
+    is the first page NOT included — continue by calling again with pages
+    starting there; returned content never overlaps. A single page bigger
+    than the limit can never be returned: the response says so in a note —
+    do not re-request that page; skip past it with pages. A PDF with no
+    text layer
     (scanned images) returns empty text plus a note; OCR is not supported.
     Password-protected PDFs and non-UTF-8 binary files are errors — for raw
     bytes use download_file.

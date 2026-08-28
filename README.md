@@ -33,8 +33,9 @@ SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
 **File downloads (optional):**
 ```
 SALESFORCE_MAX_DOWNLOAD_BYTES=10485760   # max download_file/read_file_text size in bytes (default 10 MB)
-SALESFORCE_MAX_TEXT_CHARS=100000         # max characters read_file_text returns per call (default 100k)
 ```
+
+`read_file_text` returns at most 100,000 characters per call (a fixed limit; longer documents are read page by page).
 
 ## Access Mode
 
@@ -62,7 +63,7 @@ SALESFORCE_ACCESS_MODE=read
 
 > **Tip:** When using this server with [MintMCP](https://mintmcp.com), you can configure fine-grained per-tool permissions directly in MintMCP instead of using the env var. This gives you more granular control (e.g., allow create but not update) without needing to restart the server.
 
-> **Note:** `download_file` and `read_file_text` return file contents inline and are read-only, but they broaden the data-exfiltration surface beyond ordinary record reads. Consider granting them separately in MintMCP rather than treating them as equivalent to the other `read` tools, and cap size with `SALESFORCE_MAX_DOWNLOAD_BYTES` (and text volume with `SALESFORCE_MAX_TEXT_CHARS`).
+> **Note:** `download_file` and `read_file_text` return file contents inline and are read-only, but they broaden the data-exfiltration surface beyond ordinary record reads. Consider granting them separately in MintMCP rather than treating them as equivalent to the other `read` tools, and cap size with `SALESFORCE_MAX_DOWNLOAD_BYTES`.
 
 ### Tool Permissions by Access Mode
 

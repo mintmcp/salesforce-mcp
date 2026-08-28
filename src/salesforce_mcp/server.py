@@ -334,9 +334,11 @@ def read_file_text(content_id: str, pages: str | None = None) -> dict:
     is the first page NOT included — continue by calling again with pages
     starting there; returned content never overlaps. A single page bigger
     than the limit can never be returned: the response says so in a note —
-    do not re-request that page; skip past it with pages. A PDF with no
-    text layer
-    (scanned images) returns empty text plus a note; OCR is not supported.
+    do not re-request that page; skip past it with pages. Only the text
+    layer is extracted: images are always skipped, and pages containing
+    images but no text are listed in a note so their empty text is not
+    mistaken for a blank page. A PDF with no text layer at all (scanned
+    images) returns empty text plus a note; OCR is not supported.
     Password-protected PDFs and non-UTF-8 binary files are errors — for raw
     bytes use download_file.
 

@@ -81,6 +81,29 @@ def _format_page_ranges(pages: list[int]) -> str:
     return ",".join(ranges)
 
 
+def _page_has_images(page) -> bool:
+    """Cheaply check a page's resources for image XObjects, without decoding them.
+
+    Best-effort: a malformed resource tree reads as "no images" rather than
+    failing the whole extraction. Images nested inside Form XObjects are not
+    recursed into.
+    """
+    try:
+        resources = page.get("/Resources")
+        if not resources:
+            return False
+        xobjects = resources.get_object().get("/XObject")
+        if not xobjects:
+            return False
+        xobjects = xobjects.get_object()
+        return any(
+            xobjects[name].get_object().get("/Subtype") == "/Image"
+            for name in xobjects
+        )
+    except Exception:
+        return False
+
+
 def _soql_id(value: str) -> str:
     """Validate a Salesforce ID and return it as a quoted SOQL literal.
 
@@ -329,20 +352,24 @@ class SalesforceClient:
 
         parts: list[str] = []
         included: list[int] = []
+        image_only_pages: list[int] = []
         total = 0
         truncated = False
         truncated_at = None
         oversize_note = None
         has_content = False
         for number in page_numbers:
+            page = reader.pages[number - 1]
             try:
-                page_text = reader.pages[number - 1].extract_text() or ""
+                page_text = page.extract_text() or ""
             except Exception as e:
                 raise ValueError(
                     f"Failed to extract text from page {number} of {filename!r}."
                 ) from e
             if page_text.strip():
                 has_content = True
+            elif _page_has_images(page):
+                image_only_pages.append(number)
             base = f"--- page {number} ---\n\n{page_text}"
             piece = base if not parts else "\n\n" + base
             if total + len(piece) > max_chars:
@@ -377,16 +404,30 @@ class SalesforceClient:
         }
         if truncated:
             result["truncatedAtPage"] = truncated_at
-            if oversize_note:
-                result["note"] = oversize_note
-        elif not has_content:
+
+        notes: list[str] = []
+        if not truncated and not has_content:
             # Page markers alone aren't content — return empty text so agents
             # don't mistake the markers for the document.
             result["text"] = ""
-            result["note"] = (
+            notes.append(
                 "No extractable text found; this PDF likely contains scanned "
                 "images. OCR is not supported."
             )
+        else:
+            # Only flag pages actually returned — a page dropped by truncation
+            # is flagged when the caller reads it.
+            flagged = [p for p in image_only_pages if p in included]
+            if flagged:
+                notes.append(
+                    f"Page(s) {_format_page_ranges(flagged)} contain images but "
+                    "no extractable text; images are not extracted and OCR is "
+                    "not supported."
+                )
+        if oversize_note:
+            notes.append(oversize_note)
+        if notes:
+            result["note"] = " ".join(notes)
         return result
 
     def upload_content_version(

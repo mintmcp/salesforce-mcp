@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pypdf import PdfWriter
-from pypdf.generic import DictionaryObject, NameObject, StreamObject
+from pypdf.generic import DictionaryObject, NameObject, NumberObject, StreamObject
 
 from salesforce_mcp.client import (
     SalesforceClient,
@@ -18,16 +18,19 @@ def _pdf_bytes(
     page_texts: list[str],
     user_password: str | None = None,
     owner_password: str | None = None,
+    image_pages: set[int] | None = None,
 ) -> bytes:
     """Build a small real PDF where each entry in page_texts becomes one page.
 
     An empty-string entry produces a page with no text content (the scanned-
-    image shape). pypdf has no text-drawing API, so the content stream is
-    assembled by hand from a Helvetica show-text operator.
+    image shape); 1-indexed page numbers in image_pages additionally get a
+    1x1 image XObject in their resources. pypdf has no drawing API, so the
+    content stream is assembled by hand from a Helvetica show-text operator.
     """
     writer = PdfWriter()
-    for text in page_texts:
+    for index, text in enumerate(page_texts, start=1):
         page = writer.add_blank_page(width=300, height=300)
+        resources = DictionaryObject()
         if text:
             font = DictionaryObject(
                 {
@@ -36,12 +39,26 @@ def _pdf_bytes(
                     NameObject("/BaseFont"): NameObject("/Helvetica"),
                 }
             )
-            page[NameObject("/Resources")] = DictionaryObject(
-                {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
+            resources[NameObject("/Font")] = DictionaryObject(
+                {NameObject("/F1"): font}
             )
             stream = StreamObject()
             stream.set_data(f"BT /F1 12 Tf 40 150 Td ({text}) Tj ET".encode())
             page[NameObject("/Contents")] = writer._add_object(stream)
+        if image_pages and index in image_pages:
+            image = StreamObject()
+            image[NameObject("/Type")] = NameObject("/XObject")
+            image[NameObject("/Subtype")] = NameObject("/Image")
+            image[NameObject("/Width")] = NumberObject(1)
+            image[NameObject("/Height")] = NumberObject(1)
+            image[NameObject("/ColorSpace")] = NameObject("/DeviceGray")
+            image[NameObject("/BitsPerComponent")] = NumberObject(8)
+            image.set_data(b"\x00")
+            resources[NameObject("/XObject")] = DictionaryObject(
+                {NameObject("/Im0"): writer._add_object(image)}
+            )
+        if resources:
+            page[NameObject("/Resources")] = resources
     if user_password is not None or owner_password is not None:
         writer.encrypt(
             user_password=user_password or "",
@@ -200,6 +217,50 @@ def test_read_pdf_no_text_layer_returns_note():
     assert out["text"] == ""
     assert "OCR" in out["note"]
     assert out["truncated"] is False
+
+
+def test_read_pdf_image_only_pages_listed_in_note():
+    data = _pdf_bytes(["cover text", "", "", "closing text"], image_pages={2, 3})
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 100_000)
+    assert "cover text" in out["text"]
+    assert "closing text" in out["text"]
+    assert "Page(s) 2-3 contain images" in out["note"]
+    assert "OCR is not supported" in out["note"]
+
+
+def test_read_pdf_blank_page_without_images_not_flagged():
+    data = _pdf_bytes(["cover text", ""])
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 100_000)
+    assert "note" not in out
+
+
+def test_read_pdf_page_with_text_and_images_not_flagged():
+    data = _pdf_bytes(["chart caption text"], image_pages={1})
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 100_000)
+    assert "chart caption text" in out["text"]
+    assert "note" not in out
+
+
+def test_read_pdf_all_image_pages_keeps_scanned_note():
+    data = _pdf_bytes(["", ""], image_pages={1, 2})
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 100_000)
+    assert out["text"] == ""
+    assert "No extractable text found" in out["note"]
+
+
+def test_read_pdf_truncated_away_image_page_not_flagged():
+    # Page 2 (image-only) doesn't fit in the cap, so it isn't returned — the
+    # note must not mention a page the caller hasn't received.
+    data = _pdf_bytes(["x" * 30, "", "tail"], image_pages={2})
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 50)
+    assert out["pagesReturned"] == "1"
+    assert out["truncated"] is True
+    assert "note" not in out
 
 
 def test_read_pdf_user_password_rejected():

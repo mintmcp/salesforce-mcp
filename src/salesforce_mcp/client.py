@@ -346,8 +346,9 @@ class SalesforceClient:
             if parts:
                 piece = "\n\n" + piece
             if total + len(piece) > max_chars:
-                parts.append(piece[: max_chars - total])
-                included.append(number)
+                # Drop the page that doesn't fit entirely: a partial fragment
+                # would be re-sent when the caller continues from this page,
+                # duplicating content in the model's context.
                 truncated = True
                 truncated_at = number
                 break

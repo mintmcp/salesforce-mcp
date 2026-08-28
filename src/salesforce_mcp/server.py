@@ -327,9 +327,12 @@ def read_file_text(content_id: str, pages: str | None = None) -> dict:
 
     Returns: filename, mimeType, sizeBytes, pageCount, pagesReturned, text
     (pages are separated by "--- page N ---" markers), truncated. When the
-    output exceeds the text limit (SALESFORCE_MAX_TEXT_CHARS, default 100000)
-    truncated is true and truncatedAtPage says where extraction stopped — call
-    again with pages starting there to continue. A PDF with no text layer
+    output would exceed the text limit (SALESFORCE_MAX_TEXT_CHARS, default
+    100000), only pages that fit completely are returned: truncated is true
+    and truncatedAtPage is the first page NOT included — continue by calling
+    again with pages starting there; returned content never overlaps. If even
+    the first requested page exceeds the limit, text is empty and the limit
+    must be raised to read that page. A PDF with no text layer
     (scanned images) returns empty text plus a note; OCR is not supported.
     Password-protected PDFs and non-UTF-8 binary files are errors — for raw
     bytes use download_file.

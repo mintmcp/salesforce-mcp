@@ -142,14 +142,30 @@ def test_read_pdf_pages_out_of_range_raises():
         )
 
 
-def test_read_pdf_truncates_at_char_limit():
+def test_read_pdf_truncates_on_page_boundary():
     data = _pdf_bytes(["first page words", "second page words", "third page words"])
     client, _ = _client_for(data)
     out = client.read_content_version_text("068000000000001", 10_000_000, 40)
     assert out["truncated"] is True
-    assert out["truncatedAtPage"] in (1, 2)
-    assert len(out["text"]) <= 40
     assert out["pageCount"] == 3
+    # Only complete pages are returned; the page that didn't fit is the
+    # continuation point and none of its text leaks into this response.
+    assert out["pagesReturned"] == "1"
+    assert out["truncatedAtPage"] == 2
+    assert "first page words" in out["text"]
+    assert "second" not in out["text"]
+    assert "--- page 2 ---" not in out["text"]
+    assert len(out["text"]) <= 40
+
+
+def test_read_pdf_first_page_over_limit_returns_empty():
+    data = _pdf_bytes(["this page alone is bigger than the cap"])
+    client, _ = _client_for(data)
+    out = client.read_content_version_text("068000000000001", 10_000_000, 10)
+    assert out["truncated"] is True
+    assert out["truncatedAtPage"] == 1
+    assert out["pagesReturned"] == ""
+    assert out["text"] == ""
 
 
 def test_read_pdf_magic_bytes_beats_wrong_extension():

@@ -10,6 +10,7 @@ from simple_salesforce import Salesforce
 from simple_salesforce.api import SFType
 
 from salesforce_mcp.auth import create_salesforce_client
+from salesforce_mcp.pdf_text import extract_pdf_text, format_pdf_pages, is_pdf
 
 _OBJECT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 # Salesforce IDs are exactly 15 or 18 chars; ContentVersion=068, ContentDocument=069.
@@ -116,8 +117,9 @@ class SalesforceClient:
             )
         return files
 
-    def download_content_version(self, content_id: str, max_bytes: int) -> dict:
-        """Download a file's bytes by ContentVersionId (068) or ContentDocumentId (069)."""
+    def _fetch_version_bytes(self, content_id: str, max_bytes: int) -> tuple[dict, bytes]:
+        """Resolve a content ID to its ContentVersion row and download its bytes,
+        enforcing the size cap before and during the streamed fetch."""
         if not _CONTENT_ID_RE.match(content_id):
             raise ValueError(
                 f"Invalid content ID: {content_id!r}. Expected a ContentVersionId "
@@ -166,10 +168,55 @@ class SalesforceClient:
                     )
                 chunks.append(chunk)
             data = b"".join(chunks)
+        return row, data
 
+    def download_content_version(
+        self,
+        content_id: str,
+        max_bytes: int,
+        mode: str = "download",
+        start_page: int | None = None,
+    ) -> dict:
+        """Download a file by ContentVersionId (068) or ContentDocumentId (069), or,
+        with mode="read", extract a PDF's text starting at start_page."""
+        if mode not in ("download", "read"):
+            raise ValueError(f'Invalid mode: {mode!r}. Use "download" or "read".')
+        if mode == "download" and start_page is not None:
+            raise ValueError(
+                'start_page is only used with mode="read". Omit it to download the '
+                'file, or set mode="read" to extract PDF text.'
+            )
+        row, data = self._fetch_version_bytes(content_id, max_bytes)
+        size = row["ContentSize"]
         extension = row.get("FileExtension") or ""
-        title = row.get("Title") or version_id
+        title = row.get("Title") or row["Id"]
         filename = f"{title}.{extension}" if extension else title
+
+        if mode == "read":
+            if not is_pdf(extension, data):
+                raise ValueError(
+                    f'mode="read" works only for PDF files; {filename!r} is not a PDF. '
+                    'Call download_file with mode="download" instead.'
+                )
+            extraction = extract_pdf_text(
+                data, start_page=1 if start_page is None else start_page
+            )
+            pages = extraction["pages"]
+            return {
+                "filename": filename,
+                "fileExtension": extension,
+                "mimeType": "application/pdf",
+                "sizeBytes": size,
+                "encoding": "text",
+                "content": format_pdf_pages(pages, extraction["totalPages"]),
+                "pdf": {
+                    **extraction,
+                    # Page text already lives in content; keep only the flags here.
+                    "pages": [
+                        {k: p[k] for k in ("page", "truncated", "hasImages")} for p in pages
+                    ],
+                },
+            }
 
         # Text-like + valid UTF-8 → readable string; anything else → base64.
         if extension.lower() in TEXT_EXTENSIONS:

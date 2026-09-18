@@ -4,11 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salesforce-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Salesforce MCP server"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.0.0",
+    # mcp 2.x removed mcp.server.fastmcp; stay on 1.x until the server is migrated.
+    "mcp[cli]>=1.0.0,<2.0.0",
+    "pypdf>=5.0.0",
     "simple-salesforce>=1.12.0",
 ]
 

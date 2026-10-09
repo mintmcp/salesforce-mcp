@@ -30,6 +30,10 @@ SALESFORCE_ACCESS_TOKEN=your-token
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
 ```
 
+**Integration User on MintMCP (client credentials):** the free Salesforce Integration licence is API-only, so it can't do the browser login. Let MintMCP mint the token instead: set the connector's auth method to **OAuth client credentials** with token URL `https://<your My Domain>/services/oauth2/token`, your app's consumer key and secret, an empty scope, and map `access_token` → `SALESFORCE_ACCESS_TOKEN` and `instance_url` → `SALESFORCE_INSTANCE_URL`.
+
+On the Salesforce app, enable the client credentials flow, set **Run As** to the integration user, and pre-authorize that user (admin-approved users, plus its profile or permission set under App Policies). Salesforce returns no refresh token or `expires_in` for this flow, so MintMCP caches each token for about 15 minutes and mints a new one on the next call after that. A revoked session can fail calls for up to that long.
+
 **File downloads (optional):**
 ```
 SALESFORCE_MAX_DOWNLOAD_BYTES=10485760   # max download_file size in bytes (default 10 MB)

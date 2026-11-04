@@ -458,5 +458,5 @@ if _ALL_ENABLED:
         if params:
             kwargs["params"] = params
         if data:
-            kwargs["data"] = data
+            kwargs["json"] = data
         return client.sf.restful(path, **kwargs)

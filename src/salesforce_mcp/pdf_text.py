@@ -139,9 +139,13 @@ def extract_pdf_text(
             raise PdfReadError(
                 "parse_failed", f"PDF text extraction failed on page {number}: {e}"
             ) from e
-        has_images = _page_has_images(page)
         remaining = char_limit - character_count
         page_truncated = len(full_text) > remaining
+        # Defer a page that doesn't fit to the next call; cut only a page bigger than the whole budget.
+        if page_truncated and pages:
+            stop_reason, next_page = "character_limit", number
+            break
+        has_images = _page_has_images(page)
         text = full_text[:remaining] if page_truncated else full_text
 
         pages.append(

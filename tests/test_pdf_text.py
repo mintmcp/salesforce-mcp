@@ -49,17 +49,30 @@ def test_start_page_out_of_range_raises(start_page):
     assert exc.value.code == "invalid_start_page"
 
 
-def test_page_over_budget_is_cut_mid_page():
-    result = extract_pdf_text(pdf_bytes(["a" * 30, "b" * 30, "c" * 30]), char_limit=40)
-    assert [p["page"] for p in result["pages"]] == [1, 2]
+def test_page_that_does_not_fit_is_deferred_whole_to_next_call():
+    data = pdf_bytes(["a" * 30, "b" * 30, "c" * 30])
+    result = extract_pdf_text(data, char_limit=40)
+    assert [p["page"] for p in result["pages"]] == [1]
     assert result["pages"][0]["truncated"] is False
-    assert result["pages"][1]["truncated"] is True
-    assert sum(len(p["text"]) for p in result["pages"]) == 40
     assert result["truncated"] is True
     assert result["stopReason"] == "character_limit"
-    assert result["nextPage"] == 3
-    assert "Page 2 exceeds the character limit" in result["warnings"][0]
-    assert result["warnings"][-1].endswith("Call again with start_page: 3.")
+    assert result["nextPage"] == 2
+    assert result["warnings"] == [
+        "Stopped at page 1 of 3 (character limit). Call again with start_page: 2."
+    ]
+    second = extract_pdf_text(data, start_page=2, char_limit=40)
+    assert second["pages"][0]["text"].strip() == "b" * 30
+
+
+def test_page_over_whole_budget_is_cut_mid_page():
+    result = extract_pdf_text(pdf_bytes(["a" * 30, "b" * 30]), char_limit=10)
+    assert [p["page"] for p in result["pages"]] == [1]
+    assert result["pages"][0]["truncated"] is True
+    assert len(result["pages"][0]["text"]) == 10
+    assert result["stopReason"] == "character_limit"
+    assert result["nextPage"] == 2
+    assert "Page 1 exceeds the character limit" in result["warnings"][0]
+    assert result["warnings"][-1].endswith("Call again with start_page: 2.")
 
 
 def test_cut_on_last_page_has_no_next_page():

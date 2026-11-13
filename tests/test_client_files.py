@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from salesforce_mcp.client import SalesforceClient, _soql_id
+from tests.pdf_fixtures import pdf_bytes
 
 
 def test_soql_id_quotes_valid_ids():
@@ -178,3 +179,97 @@ def test_download_document_id_uses_latest_published_version():
     soql = sf.query.call_args[0][0]
     assert "LatestPublishedVersionId" in soql
     assert "IsLatest" not in soql
+
+
+# --- download_content_version, mode="read" ---
+
+
+def _client_with_file(data: bytes, **row):
+    sf = MagicMock()
+    sf.query.return_value = _version_query_result(ContentSize=len(data), **row)
+    sf._call_salesforce.return_value = _stream_resp(data)
+    return _client_with_sf(sf), sf
+
+
+def test_read_mode_returns_page_text_and_pdf_block():
+    data = pdf_bytes(["alpha", "beta"])
+    c, _ = _client_with_file(data)
+    out = c.download_content_version("068000000000001", max_bytes=10**6, mode="read")
+    assert list(out) == [
+        "filename", "fileExtension", "mimeType", "sizeBytes", "encoding", "content", "pdf",
+    ]
+    assert out["filename"] == "report.pdf"
+    assert out["sizeBytes"] == len(data)
+    assert out["encoding"] == "text"
+    assert out["content"].startswith("--- Page 1 of 2 ---\nalpha")
+    assert "--- Page 2 of 2 ---\nbeta" in out["content"]
+    assert out["pdf"] == {
+        "totalPages": 2,
+        "pages": [
+            {"page": 1, "truncated": False, "hasImages": False},
+            {"page": 2, "truncated": False, "hasImages": False},
+        ],
+        "truncated": False,
+        "nextPage": None,
+        "stopReason": "complete",
+        "warnings": [],
+    }
+
+
+def test_read_mode_start_page():
+    c, _ = _client_with_file(pdf_bytes(["alpha", "beta"]))
+    out = c.download_content_version(
+        "068000000000001", max_bytes=10**6, mode="read", start_page=2
+    )
+    assert out["content"].startswith("--- Page 2 of 2 ---")
+    assert [p["page"] for p in out["pdf"]["pages"]] == [2]
+
+
+def test_read_mode_detects_pdf_by_magic_bytes_despite_extension():
+    c, _ = _client_with_file(pdf_bytes(["alpha"]), FileExtension="docx")
+    out = c.download_content_version("068000000000001", max_bytes=10**6, mode="read")
+    assert out["mimeType"] == "application/pdf"
+    assert out["pdf"]["totalPages"] == 1
+
+
+def test_read_mode_rejects_non_pdf():
+    c, _ = _client_with_file(b"a,b\n1,2\n", FileExtension="csv")
+    with pytest.raises(ValueError, match='mode="download"'):
+        c.download_content_version("068000000000001", max_bytes=1000, mode="read")
+
+
+def test_read_mode_rejects_oversize_before_fetch():
+    sf = MagicMock()
+    sf.query.return_value = _version_query_result(ContentSize=5000)
+    c = _client_with_sf(sf)
+    with pytest.raises(ValueError, match="too large"):
+        c.download_content_version("068000000000001", max_bytes=1000, mode="read")
+    sf._call_salesforce.assert_not_called()
+
+
+def test_start_page_in_download_mode_rejected_before_any_salesforce_call():
+    sf = MagicMock()
+    c = _client_with_sf(sf)
+    with pytest.raises(ValueError, match="start_page is only used with"):
+        c.download_content_version("068000000000001", max_bytes=1000, start_page=2)
+    sf.query.assert_not_called()
+
+
+def test_invalid_mode_rejected():
+    c = _client_with_sf(MagicMock())
+    with pytest.raises(ValueError, match="Invalid mode"):
+        c.download_content_version("068000000000001", max_bytes=1000, mode="ocr")
+
+
+def test_download_mode_output_unchanged_for_pdf():
+    data = pdf_bytes(["alpha"])
+    c, _ = _client_with_file(data)
+    out = c.download_content_version("068000000000001", max_bytes=10**6)
+    assert out == {
+        "filename": "report.pdf",
+        "fileExtension": "pdf",
+        "mimeType": "application/pdf",
+        "sizeBytes": len(data),
+        "encoding": "base64",
+        "content": base64.b64encode(data).decode("ascii"),
+    }

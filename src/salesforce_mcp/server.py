@@ -4,7 +4,7 @@ import functools
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from simple_salesforce.exceptions import SalesforceError
@@ -286,8 +286,13 @@ def list_files(record_id: str) -> list[dict]:
     }
 )
 @_sf_error_handler
-def download_file(content_id: str) -> dict:
-    """Download a file's contents from Salesforce by its content ID.
+def download_file(
+    content_id: str,
+    mode: Literal["download", "read"] = "download",
+    start_page: int | None = None,
+) -> dict:
+    """Download a file's contents from Salesforce by its content ID, or read the
+    text of a PDF with mode="read".
 
     content_id accepts a ContentVersionId (068...) or a ContentDocumentId
     (069...). For a 069 ID the latest published version is downloaded. Find these
@@ -299,9 +304,23 @@ def download_file(content_id: str) -> dict:
     (encoding="base64"). Returns: filename, fileExtension, mimeType, sizeBytes,
     encoding, content.
 
+    mode="read" works only for PDFs and extracts their text server-side — use it
+    whenever you need to know what a PDF says, since the base64 that download mode
+    returns for PDFs is not readable. content holds the extracted text with a
+    "--- Page N of M ---" line before each page, encoding is "text", and a pdf
+    field carries totalPages, per-page flags (truncated, hasImages), truncated,
+    nextPage, stopReason, and warnings. Each read call extracts at most 100,000
+    characters of page text, 200 pages, or 10 seconds of processing; for longer
+    PDFs call again with start_page set to the nextPage value from the previous
+    response. Pages containing images are flagged, but images and scanned text
+    are not read because OCR is not supported. start_page is valid only with
+    mode="read".
+
     Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
-    default 10 MB) are rejected to avoid oversized responses."""
-    return client.download_content_version(content_id, _MAX_DOWNLOAD_BYTES)
+    default 10 MB) are rejected in both modes to avoid oversized responses."""
+    return client.download_content_version(
+        content_id, _MAX_DOWNLOAD_BYTES, mode, start_page
+    )
 
 
 # --- Write tools (read_write and all) ---

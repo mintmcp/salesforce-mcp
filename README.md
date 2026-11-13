@@ -39,6 +39,8 @@ On the Salesforce app, enable the client credentials flow, set **Run As** to the
 SALESFORCE_MAX_DOWNLOAD_BYTES=10485760   # max download_file size in bytes (default 10 MB)
 ```
 
+`download_file` with `mode="read"` extracts a PDF's text instead of returning base64. Each read call returns at most 100,000 characters of page text, 200 pages, or 10 seconds of processing (fixed limits); longer PDFs continue with `start_page`. OCR is not supported.
+
 ## Access Mode
 
 Control which tools are available by setting `SALESFORCE_ACCESS_MODE`:
@@ -106,7 +108,7 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 | `run_sosl_search` | Cross-object full-text search via SOSL |
 | `get_record` | Get a single record by ID |
 | `list_files` | List files (ContentDocuments) attached to a record |
-| `download_file` | Download a file's contents by ContentVersionId or ContentDocumentId |
+| `download_file` | Download a file's contents by ContentVersionId or ContentDocumentId, or read a PDF's text with `mode="read"` |
 | `get_report_metadata` | Get detailed metadata for a report (columns, filters, groupings, report type) |
 | `get_report_type_fields` | Drill into the report type's field catalog — list categories, or fetch fields for one category |
 | `create_record` | Create a new record |

@@ -1,5 +1,6 @@
 """Unit tests for the restful tool's HTTP encoding (fake transport, no live org)."""
 
+import asyncio
 import json
 
 import requests
@@ -40,10 +41,12 @@ def _capture(monkeypatch) -> _CaptureAdapter:
 def test_restful_sends_data_as_json_body(monkeypatch):
     adapter = _capture(monkeypatch)
     payload = {"inputs": [{"action": "EDIT_AS_DRAFT_ARTICLE", "articleId": "kA0"}]}
-    server.restful(
-        "actions/standard/createDraftFromOnlineKnowledgeArticle",
-        method="POST",
-        data=payload,
+    asyncio.run(
+        server.restful(
+            "actions/standard/createDraftFromOnlineKnowledgeArticle",
+            method="POST",
+            data=payload,
+        )
     )
     req = adapter.sent[0]
     assert req.method == "POST"
@@ -53,7 +56,9 @@ def test_restful_sends_data_as_json_body(monkeypatch):
 
 def test_restful_get_sends_params_without_body(monkeypatch):
     adapter = _capture(monkeypatch)
-    server.restful("analytics/reports/00O000000000001", params={"includeDetails": "true"})
+    asyncio.run(
+        server.restful("analytics/reports/00O000000000001", params={"includeDetails": "true"})
+    )
     req = adapter.sent[0]
     assert req.method == "GET"
     assert "includeDetails=true" in req.url

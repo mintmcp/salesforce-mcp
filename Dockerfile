@@ -9,10 +9,12 @@ RUN python -m venv /app/.venv \
  && ln -s /app/.venv/bin/salesforce-mcp /usr/local/bin/salesforce-mcp
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Salesforce credentials are supplied per-user by the MintMCP runtime (stdio
-# connector: injected as process env). Placeholders keep them unset at build time.
+# Salesforce credentials are supplied per-user by the MintMCP runtime: as request
+# headers on an HTTP connector, as process env on a stdio connector.
 ENV SALESFORCE_ACCESS_MODE=all
 
 EXPOSE 8000
 
-CMD ["/app/.venv/bin/salesforce-mcp"]
+# HTTP connectors run this CMD. Stdio connectors set their command to the bare
+# binary, which keeps the stdio default.
+CMD ["/app/.venv/bin/salesforce-mcp", "--transport", "streamable-http"]

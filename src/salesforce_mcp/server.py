@@ -6,14 +6,15 @@ import os
 import re
 from typing import Any, Literal
 
+import anyio
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
 from simple_salesforce.exceptions import SalesforceError
 
-from salesforce_mcp.client import DEFAULT_MAX_DOWNLOAD_BYTES, client
+from salesforce_mcp.auth import create_salesforce_client, env_from_headers, request_env
+from salesforce_mcp.client import DEFAULT_MAX_DOWNLOAD_BYTES, SalesforceClient, client
 
 logger = logging.getLogger(__name__)
-
-mcp = FastMCP("Salesforce")
 
 # --- Access mode ---
 
@@ -51,14 +52,46 @@ def _max_download_bytes() -> int:
 
 _MAX_DOWNLOAD_BYTES = _max_download_bytes()
 
+# The HTTP settings only apply to `--transport streamable-http`. Stateless JSON
+# responses let any replica answer any request, with no session to lose.
+mcp = FastMCP(
+    "Salesforce",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", "8000")),
+    stateless_http=True,
+    json_response=True,
+    # upload_file takes base64 content (4/3 the file size) up to _MAX_DOWNLOAD_BYTES, plus 1 MiB for the envelope.
+    max_request_body_size=max(
+        DEFAULT_MAX_REQUEST_BODY_SIZE, _MAX_DOWNLOAD_BYTES * 4 // 3 + 1024 * 1024
+    ),
+)
+
+
+def _client() -> SalesforceClient:
+    """The caller's client over HTTP when MintMCP forwards per-user env headers; the env-configured one otherwise."""
+    try:
+        request = mcp.get_context().request_context.request
+    except ValueError:  # called outside an MCP request (e.g. tests)
+        return client
+    if request is None:  # stdio
+        return client
+    header_env = env_from_headers(request.headers)
+    if not header_env:
+        return client
+    return SalesforceClient(create_salesforce_client(request_env(header_env)))
+
 
 def _sf_error_handler(fn):
-    """Convert Salesforce/validation errors to user-friendly messages."""
+    """Run the tool off the event loop and convert Salesforce/validation errors to user-friendly messages.
+
+    Tools make blocking Salesforce calls; over HTTP one process serves every user,
+    so running them inline would stall all other requests until they return.
+    """
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         try:
-            return fn(*args, **kwargs)
+            return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
         except ValueError as e:
             raise ValueError(str(e)) from e
         except SalesforceError as e:
@@ -85,7 +118,7 @@ def list_objects(search: str | None = None) -> list[dict]:
     Standard objects: Account, Contact, Lead, Opportunity, Case, Task, Event, User.
     Custom objects end in __c (e.g., Invoice__c).
     Follow up with describe_object to see fields for any object."""
-    return client.list_objects(search)
+    return _client().list_objects(search)
 
 
 @mcp.tool(
@@ -106,7 +139,7 @@ def describe_object(object_name: str) -> dict:
 
     Standard objects: Account, Contact, Lead, Opportunity, Case, Task, Event, User.
     Custom objects and fields end in __c."""
-    return client.describe_object(object_name)
+    return _client().describe_object(object_name)
 
 
 @mcp.tool(
@@ -129,7 +162,7 @@ def run_soql_query(query: str) -> dict:
 
     Always include LIMIT to avoid large result sets. Call describe_object first if you
     don't know the available fields. Results include totalSize, done, and records array."""
-    return client.sf.query(query)
+    return _client().sf.query(query)
 
 
 @mcp.tool(
@@ -149,7 +182,7 @@ def run_sosl_search(search: str) -> dict:
 
     Example: FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name), Contact(Id, Name, Email)
     Wildcards: * (multiple chars), ? (single char). Minimum 2 characters."""
-    return client.sf.search(search)
+    return _client().sf.search(search)
 
 
 @mcp.tool(
@@ -165,7 +198,7 @@ def get_record(object_name: str, record_id: str) -> dict:
     type (001=Account, 003=Contact, 006=Opportunity, 00Q=Lead, 500=Case).
 
     Use run_soql_query or run_sosl_search to find record IDs if you only have a name or email."""
-    sf_object = client.get_sf_object(object_name)
+    sf_object = _client().get_sf_object(object_name)
     return sf_object.get(record_id)
 
 
@@ -175,7 +208,7 @@ _REPORT_ID_RE = re.compile(r"^[A-Za-z0-9]{15,18}$")
 def _describe_report(report_id: str) -> dict:
     if not _REPORT_ID_RE.match(report_id):
         raise ValueError(f"Invalid Salesforce report ID: {report_id!r}")
-    return client.sf.restful(f"analytics/reports/{report_id}/describe")
+    return _client().sf.restful(f"analytics/reports/{report_id}/describe")
 
 
 @mcp.tool(
@@ -277,7 +310,7 @@ def list_files(record_id: str) -> list[dict]:
 
     Returns one entry per file: contentVersionId (068..., pass this to
     download_file), contentDocumentId (069...), title, fileExtension, sizeBytes."""
-    return client.list_record_files(record_id)
+    return _client().list_record_files(record_id)
 
 
 @mcp.tool(
@@ -318,7 +351,7 @@ def download_file(
 
     Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
     default 10 MB) are rejected in both modes to avoid oversized responses."""
-    return client.download_content_version(
+    return _client().download_content_version(
         content_id, _MAX_DOWNLOAD_BYTES, mode, start_page
     )
 
@@ -341,7 +374,7 @@ if _WRITE_ENABLED:
         Returns the new record's ID on success.
 
         Example: create_record("Contact", {"LastName": "Smith", "Email": "smith@example.com"})"""
-        sf_object = client.get_sf_object(object_name)
+        sf_object = _client().get_sf_object(object_name)
         return sf_object.create(data)
 
     @mcp.tool(
@@ -375,7 +408,7 @@ if _WRITE_ENABLED:
         Files larger than the configured limit (SALESFORCE_MAX_DOWNLOAD_BYTES,
         default 10 MB) are rejected. Returns: contentVersionId, contentDocumentId,
         title, fileExtension, linkedEntityId (null when unattached)."""
-        return client.upload_content_version(
+        return _client().upload_content_version(
             filename, content, encoding, _MAX_DOWNLOAD_BYTES, record_id
         )
 
@@ -392,7 +425,7 @@ if _WRITE_ENABLED:
 
         Example: update_record("Opportunity", "006...", {"StageName": "Closed Won", "CloseDate": "2026-03-15"})
         Returns HTTP 204 on success."""
-        sf_object = client.get_sf_object(object_name)
+        sf_object = _client().get_sf_object(object_name)
         return sf_object.update(record_id, data)
 
 
@@ -410,7 +443,7 @@ if _ALL_ENABLED:
     def delete_record(object_name: str, record_id: str) -> dict:
         """Permanently delete a Salesforce record. This cannot be undone via the API.
         Records go to the Recycle Bin and can be recovered by an admin within 15 days."""
-        sf_object = client.get_sf_object(object_name)
+        sf_object = _client().get_sf_object(object_name)
         return sf_object.delete(record_id)
 
     @mcp.tool(
@@ -430,7 +463,7 @@ if _ALL_ENABLED:
         Example: tooling_execute("query/?q=SELECT Id,TableEnumOrId FROM CustomField WHERE TableEnumOrId='Account'")
 
         Use run_soql_query for regular data queries. Use this for metadata inspection."""
-        return client.sf.toolingexecute(action, method=method, data=data or {})
+        return _client().sf.toolingexecute(action, method=method, data=data or {})
 
     @mcp.tool(
         annotations={
@@ -446,7 +479,7 @@ if _ALL_ENABLED:
         in Apex by developers. The action is the URL path after /services/apexrest/.
 
         This will return an error if no custom Apex REST endpoints exist in the org."""
-        return client.sf.apexecute(action, method=method, data=data or {})
+        return _client().sf.apexecute(action, method=method, data=data or {})
 
     @mcp.tool(
         annotations={
@@ -478,4 +511,4 @@ if _ALL_ENABLED:
             kwargs["params"] = params
         if data:
             kwargs["json"] = data
-        return client.sf.restful(path, **kwargs)
+        return _client().sf.restful(path, **kwargs)

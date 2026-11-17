@@ -38,8 +38,8 @@ def _soql_id(value: str) -> str:
 
 
 class SalesforceClient:
-    def __init__(self) -> None:
-        self._sf: Salesforce | None = None
+    def __init__(self, sf: Salesforce | None = None) -> None:
+        self._sf = sf
         self._describe_cache: dict[str, dict] = {}
 
     @property

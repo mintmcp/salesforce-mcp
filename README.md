@@ -95,8 +95,19 @@ MCP tool annotations (`readOnlyHint`, `destructiveHint`) are set on each tool so
 ## Run
 
 ```bash
-.venv/bin/python -m salesforce_mcp
+.venv/bin/python -m salesforce_mcp                              # stdio
+.venv/bin/python -m salesforce_mcp --transport streamable-http  # HTTP at :$PORT/mcp (default 8000)
 ```
+
+The Docker image runs `--transport streamable-http`. Over HTTP the server is stateless with JSON responses, so any replica answers any request, and tool calls run on worker threads so one slow Salesforce call doesn't hold up other users.
+
+### HTTP on MintMCP
+
+One process serves every user, so per-user values can't live in process env. MintMCP sends each user's env vars on every request as `X-MintMCP-Env-<NAME>` headers (e.g. `X-MintMCP-Env-SALESFORCE_ACCESS_TOKEN`), and the server reads the variables above from them, overriding process env for that request. Requests without these headers use the process env.
+
+Deploy with transport `http`, path `/mcp`, and no command (the image's `CMD` starts HTTP). The auth setup is unchanged from stdio: keep the env mapping `access_token` → `SALESFORCE_ACCESS_TOKEN`, `instance_url` → `SALESFORCE_INSTANCE_URL`.
+
+Stdio connectors keep working: their command is the bare `salesforce-mcp` binary, which defaults to stdio.
 
 ## Tools
 

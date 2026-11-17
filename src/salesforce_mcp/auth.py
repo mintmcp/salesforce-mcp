@@ -7,15 +7,23 @@ from simple_salesforce import Salesforce
 
 # Over HTTP, MintMCP sends each user's env vars as X-MintMCP-Env-<NAME> request headers.
 _ENV_HEADER_PREFIX = "x-mintmcp-env-"
+# MintMCP reserves the X-MintMCP-Env- prefix, so Hosted OAuth token fields map to these instead.
+_OAUTH_HEADERS = {
+    "x-salesforce-access-token": "SALESFORCE_ACCESS_TOKEN",
+    "x-salesforce-instance-url": "SALESFORCE_INSTANCE_URL",
+}
 
 
 def env_from_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    """Collect the per-user env vars MintMCP forwards as `X-MintMCP-Env-<NAME>` headers."""
-    return {
-        name[len(_ENV_HEADER_PREFIX) :].upper(): value
-        for name, value in headers.items()
-        if name.lower().startswith(_ENV_HEADER_PREFIX)
-    }
+    """Collect the per-user env vars MintMCP forwards as `X-MintMCP-Env-<NAME>` or Hosted OAuth headers."""
+    env = {}
+    for name, value in headers.items():
+        lower = name.lower()
+        if lower.startswith(_ENV_HEADER_PREFIX):
+            env[lower[len(_ENV_HEADER_PREFIX) :].upper()] = value
+        elif lower in _OAUTH_HEADERS:
+            env[_OAUTH_HEADERS[lower]] = value
+    return env
 
 
 def create_salesforce_client(env: Mapping[str, str] = os.environ) -> Salesforce:
@@ -47,5 +55,6 @@ def create_salesforce_client(env: Mapping[str, str] = os.environ) -> Salesforce:
         "Missing Salesforce credentials. Set either:\n"
         "  1) SALESFORCE_USERNAME + SALESFORCE_PASSWORD + SALESFORCE_SECURITY_TOKEN, or\n"
         "  2) SALESFORCE_ACCESS_TOKEN + SALESFORCE_INSTANCE_URL\n"
-        "Over HTTP, MintMCP sends them as X-MintMCP-Env-<NAME> headers."
+        "Over HTTP, send them as X-MintMCP-Env-<NAME> headers, or map Hosted OAuth "
+        "to X-Salesforce-Access-Token and X-Salesforce-Instance-Url."
     )

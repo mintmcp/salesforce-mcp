@@ -16,6 +16,17 @@ def test_env_from_headers_keeps_only_mintmcp_env_headers():
     }
 
 
+def test_env_from_headers_maps_hosted_oauth_headers():
+    headers = {
+        "X-Salesforce-Access-Token": "tok123",
+        "x-salesforce-instance-url": "https://example.my.salesforce.com",
+    }
+    assert env_from_headers(headers) == {
+        "SALESFORCE_ACCESS_TOKEN": "tok123",
+        "SALESFORCE_INSTANCE_URL": "https://example.my.salesforce.com",
+    }
+
+
 def test_env_from_headers_without_mintmcp_headers_is_empty():
     assert env_from_headers({"authorization": "Bearer x"}) == {}
 

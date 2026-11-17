@@ -105,7 +105,12 @@ The Docker image runs `--transport streamable-http`. Over HTTP the server is sta
 
 One process serves every user, so per-user values can't live in process env. MintMCP sends each user's env vars on every request as `X-MintMCP-Env-<NAME>` headers (e.g. `X-MintMCP-Env-SALESFORCE_ACCESS_TOKEN`), and the server reads the variables above from them, overriding process env for that request. Requests without these headers use the process env.
 
-Deploy with transport `http`, path `/mcp`, and no command (the image's `CMD` starts HTTP). The auth setup is unchanged from stdio: keep the env mapping `access_token` → `SALESFORCE_ACCESS_TOKEN`, `instance_url` → `SALESFORCE_INSTANCE_URL`.
+Deploy with transport `http`, path `/mcp`, and no command (the image's `CMD` starts HTTP). Hosted OAuth on an HTTP connector maps token fields to headers, and MintMCP reserves the `X-MintMCP-Env-` prefix there, so map them to these headers with no prefix:
+
+| Token field | Header |
+|---|---|
+| `access_token` | `X-Salesforce-Access-Token` |
+| `instance_url` | `X-Salesforce-Instance-Url` |
 
 Stdio connectors keep working: their command is the bare `salesforce-mcp` binary, which defaults to stdio.
 

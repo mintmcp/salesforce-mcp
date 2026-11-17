@@ -1,14 +1,16 @@
 """End-to-end tests for the streamable HTTP transport (fake Salesforce transport, no live org)."""
 
 import asyncio
+import base64
 import json
 import time
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 from starlette.testclient import TestClient
 
 from salesforce_mcp import auth, server
-from tests.test_server_restful import _CaptureAdapter
+from tests.test_server_restful import _capture, _CaptureAdapter
 
 _ACCEPT = "application/json, text/event-stream"
 
@@ -61,6 +63,74 @@ def test_tool_call_uses_the_callers_forwarded_env_headers(http_client, monkeypat
     assert sent.url.startswith("https://user-a.my.salesforce.com/services/data/")
     assert sent.headers["Authorization"] == "Bearer user-a-token"
     assert json.loads(result["result"]["content"][0]["text"]) == {"ok": True}
+
+
+def _capture_header_clients(monkeypatch) -> _CaptureAdapter:
+    adapter = _CaptureAdapter()
+
+    def capturing_client(env):
+        sf = auth.create_salesforce_client(env)
+        sf.session.mount("https://", adapter)
+        return sf
+
+    monkeypatch.setattr(server, "create_salesforce_client", capturing_client)
+    return adapter
+
+
+_USER_A_HEADERS = {
+    "X-Salesforce-Access-Token": "user-a-token",
+    "X-Salesforce-Instance-Url": "https://user-a.my.salesforce.com",
+}
+
+
+def test_header_credentials_replace_process_env_credentials(http_client, monkeypatch):
+    for name, value in {
+        "SALESFORCE_USERNAME": "global@example.com",
+        "SALESFORCE_PASSWORD": "global-password",
+        "SALESFORCE_SECURITY_TOKEN": "global-security-token",
+        "SALESFORCE_ACCESS_TOKEN": "global-token",
+        "SALESFORCE_INSTANCE_URL": "https://global.my.salesforce.com",
+    }.items():
+        monkeypatch.setenv(name, value)
+    adapter = _capture_header_clients(monkeypatch)
+
+    result = _rpc(
+        http_client,
+        "tools/call",
+        {"name": "restful", "arguments": {"path": "limits"}},
+        headers=_USER_A_HEADERS,
+    )
+
+    assert not result["result"]["isError"], result
+    assert [r.url.split("/services/")[0] for r in adapter.sent] == ["https://user-a.my.salesforce.com"]
+    assert adapter.sent[0].headers["Authorization"] == "Bearer user-a-token"
+
+
+def test_upload_file_over_http_accepts_files_above_the_sdk_default_body_limit(http_client, monkeypatch):
+    adapter = _capture_header_clients(monkeypatch)
+    content = base64.b64encode(b"x" * (5 * 1024 * 1024)).decode()
+
+    _rpc(
+        http_client,
+        "tools/call",
+        {"name": "upload_file", "arguments": {"filename": "big.txt", "content": content}},
+        headers=_USER_A_HEADERS,
+    )
+
+    assert len(adapter.sent[0].body) > 5 * 1024 * 1024
+
+
+def test_stdio_tool_call_uses_the_env_configured_client(monkeypatch):
+    adapter = _capture(monkeypatch)
+
+    async def call():
+        async with create_connected_server_and_client_session(server.mcp) as session:
+            return await session.call_tool("restful", {"path": "limits"})
+
+    result = asyncio.run(call())
+
+    assert not result.isError, result
+    assert adapter.sent[0].headers["Authorization"] == "Bearer token"
 
 
 def test_tool_call_without_credentials_returns_a_tool_error(http_client, monkeypatch):

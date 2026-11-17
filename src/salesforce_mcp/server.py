@@ -8,22 +8,13 @@ from typing import Any, Literal
 
 import anyio
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
 from simple_salesforce.exceptions import SalesforceError
 
-from salesforce_mcp.auth import create_salesforce_client, env_from_headers
+from salesforce_mcp.auth import create_salesforce_client, env_from_headers, request_env
 from salesforce_mcp.client import DEFAULT_MAX_DOWNLOAD_BYTES, SalesforceClient, client
 
 logger = logging.getLogger(__name__)
-
-# The HTTP settings only apply to `--transport streamable-http`. Stateless JSON
-# responses let any replica answer any request, with no session to lose.
-mcp = FastMCP(
-    "Salesforce",
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", "8000")),
-    stateless_http=True,
-    json_response=True,
-)
 
 # --- Access mode ---
 
@@ -61,6 +52,20 @@ def _max_download_bytes() -> int:
 
 _MAX_DOWNLOAD_BYTES = _max_download_bytes()
 
+# The HTTP settings only apply to `--transport streamable-http`. Stateless JSON
+# responses let any replica answer any request, with no session to lose.
+mcp = FastMCP(
+    "Salesforce",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", "8000")),
+    stateless_http=True,
+    json_response=True,
+    # upload_file takes base64 content (4/3 the file size) up to _MAX_DOWNLOAD_BYTES, plus 1 MiB for the envelope.
+    max_request_body_size=max(
+        DEFAULT_MAX_REQUEST_BODY_SIZE, _MAX_DOWNLOAD_BYTES * 4 // 3 + 1024 * 1024
+    ),
+)
+
 
 def _client() -> SalesforceClient:
     """The caller's client over HTTP when MintMCP forwards per-user env headers; the env-configured one otherwise."""
@@ -73,7 +78,7 @@ def _client() -> SalesforceClient:
     header_env = env_from_headers(request.headers)
     if not header_env:
         return client
-    return SalesforceClient(create_salesforce_client({**os.environ, **header_env}))
+    return SalesforceClient(create_salesforce_client(request_env(header_env)))
 
 
 def _sf_error_handler(fn):

@@ -30,7 +30,7 @@ SALESFORCE_ACCESS_TOKEN=your-token
 SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
 ```
 
-**Integration User on MintMCP (client credentials):** the free Salesforce Integration licence is API-only, so it can't do the browser login. Let MintMCP mint the token instead: set the connector's auth method to **OAuth client credentials** with token URL `https://<your My Domain>/services/oauth2/token`, your app's consumer key and secret, an empty scope, and map `access_token` → `SALESFORCE_ACCESS_TOKEN` and `instance_url` → `SALESFORCE_INSTANCE_URL`.
+**Integration User on MintMCP (client credentials):** the free Salesforce Integration licence is API-only, so it can't do the browser login. Let MintMCP mint the token instead: set the connector's auth method to **OAuth client credentials** with token URL `https://<your My Domain>/services/oauth2/token`, your app's consumer key and secret, an empty scope, and map `access_token` → `SALESFORCE_ACCESS_TOKEN` and `instance_url` → `SALESFORCE_INSTANCE_URL` (on an HTTP connector, map them to the headers in [HTTP on MintMCP](#http-on-mintmcp) instead).
 
 On the Salesforce app, enable the client credentials flow, set **Run As** to the integration user, and pre-authorize that user (admin-approved users, plus its profile or permission set under App Policies). Salesforce returns no refresh token or `expires_in` for this flow, so MintMCP caches each token for about 15 minutes and mints a new one on the next call after that. A revoked session can fail calls for up to that long.
 
@@ -103,7 +103,7 @@ The Docker image runs `--transport streamable-http`. Over HTTP the server is sta
 
 ### HTTP on MintMCP
 
-One process serves every user, so per-user values can't live in process env. MintMCP sends each user's env vars on every request as `X-MintMCP-Env-<NAME>` headers (e.g. `X-MintMCP-Env-SALESFORCE_ACCESS_TOKEN`), and the server reads the variables above from them, overriding process env for that request. Requests without these headers use the process env.
+One process serves every user, so per-user values can't live in process env. MintMCP sends each user's env vars on every request as `X-MintMCP-Env-<NAME>` headers (e.g. `X-MintMCP-Env-SALESFORCE_ACCESS_TOKEN`), and the server reads the variables above from them, overriding process env for that request. When a request carries any credential header, its credentials come only from the headers. Requests without these headers use the process env. Per-user username/password logs in to Salesforce on every tool call, so prefer OAuth over HTTP.
 
 Deploy with transport `http`, path `/mcp`, and no command (the image's `CMD` starts HTTP). Hosted OAuth on an HTTP connector maps token fields to headers, and MintMCP reserves the `X-MintMCP-Env-` prefix there, so map them to these headers with no prefix:
 

@@ -105,12 +105,14 @@ The Docker image runs `--transport streamable-http`. Over HTTP the server is sta
 
 One process serves every user, so per-user values can't live in process env. MintMCP sends each user's env vars on every request as `X-MintMCP-Env-<NAME>` headers (e.g. `X-MintMCP-Env-SALESFORCE_ACCESS_TOKEN`), and the server reads the variables above from them, overriding process env for that request. When a request carries any credential header, its credentials come only from the headers. Requests without these headers use the process env. Per-user username/password logs in to Salesforce on every tool call, so prefer OAuth over HTTP.
 
-Deploy with transport `http`, path `/mcp`, and no command (the image's `CMD` starts HTTP). Hosted OAuth on an HTTP connector maps token fields to headers, and MintMCP reserves the `X-MintMCP-Env-` prefix there, so map them to these headers with no prefix:
+Deploy with transport `http`, path `/mcp`, and an empty command. The image's `CMD` starts HTTP; a command of `salesforce-mcp` starts stdio, which exits at once on an HTTP connector and leaves the rollout stuck. Hosted OAuth on an HTTP connector maps token fields to headers, and MintMCP reserves the `X-MintMCP-Env-` prefix there, so map them to these headers. A `Bearer ` prefix on the access token is accepted, but leave it empty:
 
 | Token field | Header |
 |---|---|
 | `access_token` | `X-Salesforce-Access-Token` |
 | `instance_url` | `X-Salesforce-Instance-Url` |
+
+A stdio connector's env mapping (`access_token` → `SALESFORCE_ACCESS_TOKEN`) keeps working after a switch to HTTP, because MintMCP forwards it as `X-MintMCP-Env-*` headers. The MintMCP settings form for an HTTP connector shows only header mappings, though, and saving that form drops the env mapping. Switch to the header mapping when you change the transport.
 
 Stdio connectors keep working: their command is the bare `salesforce-mcp` binary, which defaults to stdio.
 

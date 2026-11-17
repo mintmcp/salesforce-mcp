@@ -85,3 +85,14 @@ def test_salesforce_calls_time_out_instead_of_hanging(monkeypatch):
 
     assert not worker.is_alive(), "Salesforce call hung past its timeout"
     assert isinstance(outcome[0], requests.exceptions.Timeout)
+
+
+def test_access_token_with_a_bearer_prefix_is_accepted():
+    # Mint's client credentials form pre-fills "Bearer " as the header prefix.
+    sf = create_salesforce_client(
+        {
+            "SALESFORCE_ACCESS_TOKEN": "Bearer tok123",
+            "SALESFORCE_INSTANCE_URL": "https://example.my.salesforce.com",
+        }
+    )
+    assert sf.session_id == "tok123"

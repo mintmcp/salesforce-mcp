@@ -77,7 +77,8 @@ def create_salesforce_client(env: Mapping[str, str] = os.environ) -> Salesforce:
             session=_TimeoutSession(),
         )
 
-    access_token = env.get("SALESFORCE_ACCESS_TOKEN")
+    # Salesforce session IDs contain no spaces, so a "Bearer " header prefix is always a misconfiguration.
+    access_token = env.get("SALESFORCE_ACCESS_TOKEN", "").removeprefix("Bearer ").strip()
     instance_url = env.get("SALESFORCE_INSTANCE_URL")
 
     if access_token and instance_url:
